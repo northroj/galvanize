@@ -42,6 +42,7 @@ struct Garage {
     int     dimensions = 3;
     double csd_step = 1;
     std::string csd_model = "spitzer";
+    std::string scattering_model = "csd";
 
     // Tallies
     std::vector<Tally>    tallies;

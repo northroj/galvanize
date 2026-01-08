@@ -398,6 +398,9 @@ bool parse_input_file(const std::filesystem::path& path) {
                 } else if (tok[0] == "category" && tok.size() == 2) {
                     tally.tally_category = tok[1];
                     tally_active = true;
+                } else if (tok[0] == "event" && tok.size() == 2) {
+                    tally.tally_event = tok[1];
+                    tally_active = true;
                 } else if (tok[0] == "energy_bins") {
                     TallyDim energy_dim;
                     energy_dim.name = "energy";
@@ -420,6 +423,7 @@ bool parse_input_file(const std::filesystem::path& path) {
                     tally_active = true;
                     tally_dims.push_back(time_dim);
                 } else if (tok[0] == "x_bins") {
+                    tally_active = true;
                     TallyDim x_dim;
                     x_dim.name = "x";
                     if (tok.size() == 2 && tok[1] == "cells") {
@@ -431,6 +435,7 @@ bool parse_input_file(const std::filesystem::path& path) {
                     }
                     tally_dims.push_back(x_dim);
                 } else if (tok[0] == "y_bins") {
+                    tally_active = true;
                     TallyDim y_dim;
                     y_dim.name = "y";
                     if (tok.size() == 2 && tok[1] == "cells") {
@@ -442,6 +447,7 @@ bool parse_input_file(const std::filesystem::path& path) {
                     }
                     tally_dims.push_back(y_dim);
                 } else if (tok[0] == "z_bins") {
+                    tally_active = true;
                     TallyDim z_dim;
                     z_dim.name = "z";
                     if (tok.size() == 2 && tok[1] == "cells") {
@@ -475,6 +481,8 @@ bool parse_input_file(const std::filesystem::path& path) {
                     garage.csd_step = std::stod(tok[1]);
                 } else if (tok[0] == "csd_model" && tok.size() == 2) {
                     garage.csd_model = tok[1];
+                } else if (tok[0] == "scattering_model" && tok.size() == 2) {
+                    garage.scattering_model = tok[1];
                 } else {
                     std::cerr << "WARN: Unrecognized settings line: " << line << "\n";
                 }            

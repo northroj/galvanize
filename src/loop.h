@@ -3,6 +3,8 @@
 #include <vector>
 #include <unordered_map>
 
+#include "utilities.h"
+
 void simulate();
 
 void simulate_timestep(int t_it);
@@ -23,6 +25,14 @@ bool distance_to_boundary(Particle& p, BoundaryCross& out);
 void nudge_into_cell(double &coord, double lo, double hi, double raw_eps);
 
 void spitzer_csd(class Particle& p, double& dedt_electron, double& dedx_electron, double& dedt_ion, double& dedx_ion);
+
+void select_scattering(Particle p, Material local_material, double& dist_scatter, int& scatter_index);
+
+void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss);
+
+double scattering_xs_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
+double stopping_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
+double straggling_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
 
 std::unordered_map<std::string, double> average_energy_by_species(const std::vector<Particle>& bank);
 

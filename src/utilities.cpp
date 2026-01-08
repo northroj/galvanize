@@ -575,3 +575,16 @@ int bin_index_from_edges(const std::vector<double>& edges, double x) {
     if (it == edges.begin()) return -1; // shouldn't happen due to earlier check
     return static_cast<int>(std::distance(edges.begin(), it)) - 1;
 }
+
+
+double mean_excitation_energy_approximation(int z_target){ // keV
+    double mei;
+    if (z_target == 1) {
+        mei = 19.0 *1e-3;
+    } else if (z_target >= 2 && z_target <= 13) {
+        mei = (11.2 + 11.7*z_target) *1e-3;
+    } else {
+        mei = (52.8 + 8.71 * z_target) *1e-3;
+    }
+    return mei;
+}

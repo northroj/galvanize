@@ -216,6 +216,7 @@ public:
     std::string              tally_name;     // e.g., "test_tally_1"
     std::vector<std::string> species;        // species labels (first dimension)
     std::string              tally_category; // free-form label
+    std::string              tally_event;
 
     std::vector<bool> problem_defined = {false, false, false, false}; // time, x, y, z
 
@@ -323,3 +324,5 @@ inline int bin_index_from_edge(const std::vector<double>& edges, double x) {
     return bin_index_from_edges(edges, x);
 }
 
+
+double mean_excitation_energy_approximation(int z_target);

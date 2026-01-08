@@ -6,7 +6,7 @@ densities 5.0 5.0 0.0
 mat_id 1
 
 [geometry]
-x -0.05 0.2 99 lin
+x -0.05 0.2 3 lin
 y -1e20 1e20
 z -1e20 1e20
 fill 1
@@ -22,6 +22,7 @@ direction beam 1.0 0.0 0.0
 [tallies]
 name test_tally_1
 category csd_energy_loss
+event pathlength
 particles d t a
 energy_bins 0 10000 99 lin
 time_bins 0 0.01 99 lin
@@ -30,11 +31,12 @@ x_bins cells
 [tallies]
 name test_tally_2
 category average_particle_energy
+event timestep
 particles a
 time_bins timesteps
 
 [settings]
-num_particles 1000
+num_particles 1
 timestep_bins 0.0 0.01 99 lin
 dimensions 3
 csd_step 10

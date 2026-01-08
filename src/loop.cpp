@@ -111,7 +111,7 @@ void simulate() {
     // Initialize standard tallies
     Tally ion_temperature_time = Tally::Make("ion_temperature_time", {"all"}, {timestep_dim, x_dim, y_dim, z_dim}, "ion_temperature_time" );
     Tally electron_temperature_time = Tally::Make("electron_temperature_time", {"e"}, {timestep_dim, x_dim, y_dim, z_dim}, "electron_temperature_time" );
-    Tally ion_density_time = Tally::Make("ion_density_time", species_dim, {timestep_dim, x_dim, y_dim, z_dim}, "ion_density_time"); // TODO: more than one material
+    Tally ion_density_time = Tally::Make("ion_density_time", species_dim, {timestep_dim, x_dim, y_dim, z_dim}, "ion_density_time");
     Tally energy_dump_ion = Tally::Make("energy_dump_ion", {"all"}, {timestep_dim, x_dim, y_dim, z_dim}, "energy_dump_ion");
     Tally energy_dump_electron = Tally::Make("energy_dump_electron", {"e"}, {timestep_dim, x_dim, y_dim, z_dim}, "energy_dump_electron");
 
@@ -251,7 +251,7 @@ void transport_particle(Particle& p, double time_census) {
 
     while ( particle_active == 2 ){
 
-        //std::cout << "Particle energy keV: " << p.energy << "  time shk: " << p.t << std::endl;
+        //std::cout << "Particle energy keV: " << p.energy << "  speed: " << p.speed <<  "  time shk: " << p.t << std::endl;
         //std::cout << "Particle position cm: " << p.x << " " << p.y << " " << p.z << std::endl;
     
         // evaluate stopping power dE/dx and dE/dt
@@ -259,8 +259,17 @@ void transport_particle(Particle& p, double time_census) {
         double dedx_electron = 0.0;  // keV/cm
         double dedt_ion = 0.0;
         double dedx_ion = 0.0;
-        //kp_alpha_csd(p); // kp not implemented fully
-        spitzer_csd(p, dedt_electron, dedx_electron, dedt_ion, dedx_ion);
+
+        if ( garage.scattering_model == "csd" ) {
+            spitzer_csd(p, dedt_electron, dedx_electron, dedt_ion, dedx_ion);
+        } else if ( garage.scattering_model == "csd_rutherford" ) {
+            dedx_ion = stopping_analytic_rutherford(p, 7, 14.0, 1.0); // FIX: set up for nitrogen at 1 g/cc
+            dedt_ion = dedx_ion / p.speed;
+            if (dedx_ion < 0) { // FIX: figure out why it goes negative
+                particle_active = 0;
+                break;
+            }
+        }
 
         //std::cout << "spitzer parameters: " << dedt_electron << " " << dedx_electron << " " << dedt_ion << " " << dedx_ion << std::endl;
 
@@ -286,7 +295,11 @@ void transport_particle(Particle& p, double time_census) {
         double dist_census = t_remaining * (dedt_electron + dedt_ion) / (dedx_electron + dedx_ion);
         double dist_csd = csd_step * p.energy / (dedx_electron + dedx_ion);
 
-        std::vector<double> distances_to_event = {dist_boundary, dist_csd, dist_census};
+        double dist_scatter = 1e10;
+        int scattering_index_local = 1000;
+        select_scattering(p, local_material, dist_scatter, scattering_index_local);
+
+        std::vector<double> distances_to_event = {dist_boundary, dist_csd, dist_census, dist_scatter};
         auto it = std::min_element(distances_to_event.begin(), distances_to_event.end());
         double smallest_distance = *it;
         size_t event_index = std::distance(distances_to_event.begin(), it);
@@ -338,6 +351,14 @@ void transport_particle(Particle& p, double time_census) {
             p.y += smallest_distance * p.dir.uy;
             p.z += smallest_distance * p.dir.uz;
             p.t += t_remaining; // time
+        } else if (event_index == 3) { // scattering collision
+            double scattering_eloss = 0;
+            scattering_collision_analytic(p, local_material, scattering_index_local, scattering_eloss);
+            p.x += smallest_distance * p.dir.ux;
+            p.y += smallest_distance * p.dir.uy;
+            p.z += smallest_distance * p.dir.uz;
+            p.t += smallest_distance * ( dedx_electron+dedx_ion ) / (dedt_electron+dedt_ion); // TODO: This might be wrong
+            eloss_total = scattering_eloss;
         }
 
         // calculate energy loss
@@ -347,16 +368,19 @@ void transport_particle(Particle& p, double time_census) {
 
         // Tally csd energy loss
         //std::cout << "tally stuff: " << eloss_total << " " << p.weight << " " << initial_p_t << " " << p.energy << std::endl; 
+        
         std::string specified_category = "csd_energy_loss";
         for (auto &t : garage.tallies) {
             if (t.tally_category == specified_category) {
                 // Check if this tally tracks this species
                 if (std::find(t.species.begin(), t.species.end(), p.species) != t.species.end()) {
                     //std::cout << "here tally" << std::endl;
-                    t.add_smear(p.species, {{"time", initial_p_t, p.t}, {"energy", p.energy, p.energy-eloss_total}}, eloss_total*p.weight);
+                    //t.add_smear(p.species, {{"time", initial_p_t, p.t}, {"energy", p.energy, p.energy-eloss_total}}, eloss_total*p.weight);
+                    t.add_smear(p.species, {{"energy", p.energy, p.energy-eloss_total},{"x", p.x, p.x+1e-10}}, eloss_total*p.weight); // FIX: kludge for scattering model 
                 }
             }
         }
+
         // ion energy dep
         double ion_eloss_fraction = dedt_ion / (dedt_ion + dedt_electron);
         garage.standard_tallies[3].add("all", {{"time", p.t}, {"x", p.x}, {"y", p.y}, {"z", p.z}}, eloss_total*ion_eloss_fraction*p.weight);
@@ -525,6 +549,7 @@ void spitzer_csd(Particle& p, double& dedt_electron, double& dedx_electron, doub
 
     double total_ion_density = 0; //  g/cc
     double electron_density = 0; // g/cc * Z
+    double electron_number_density = 0; // e per cc
 
     rtt_units::PhysicalConstexprs<rtt_units::CGS> pc;
     double keV = pc.eV()*1e3;
@@ -535,14 +560,17 @@ void spitzer_csd(Particle& p, double& dedt_electron, double& dedx_electron, doub
         double ion_mass = species_2_mass(ion_species); // g/atom
 
         double ion_density = local_material.densities[ion_it]; // g/cc
-        if (ion_density <= 1e-5){ // 1e-5 g/cc threshold, might need to be adjusted
-            break;
+        if (ion_density <= 1e-5){ // 1e-5 g/cc threshold to ignore, might need to be adjusted
+            continue;
         }
         total_ion_density += ion_density;
 
         electron_density += ion_density * species_2_z(ion_species);
 
-        double ion_number_density = ion_density / background_molar_mass * rtt_units::AVOGADRO;
+        //double ion_number_density = ion_density / background_molar_mass * rtt_units::AVOGADRO;
+        double ion_number_density = ion_density / species_2_molar_mass(ion_species) * rtt_units::AVOGADRO;
+
+        //std::cout << "number density: " << ion_species << " " << ion_number_density << std::endl;
 
         auto const ion_model(std::make_shared<rtt_cdi_cpeloss::Analytic_Spitzer_Eloss_Model>(
         ion_zaid, ion_mass, projectile_zaid, projectile_mass));
@@ -551,16 +579,21 @@ void spitzer_csd(Particle& p, double& dedt_electron, double& dedx_electron, doub
 
         double dedt_temp = eloss_ion.getEloss(local_material.ion_temperature, ion_number_density, projectile_speed);
 
-        dedt_ion += dedt_temp * ion_density;
-        dedx_ion += dedt_temp * ion_density / projectile_speed; //(projectile_speed*1e8 * 1e-8/keV); // keV/cm?
+        //std::cout << "dedt_temp: " << dedt_temp << std::endl;
+
+        dedt_ion += dedt_temp; // * ion density? no, keep it out
+        dedx_ion += dedt_temp / projectile_speed; //(projectile_speed*1e8 * 1e-8/keV); // keV/cm?
+
+        electron_number_density += ion_number_density * species_2_z(ion_species);
 
     }
 
-    dedt_ion /= total_ion_density;
-    dedx_ion /= total_ion_density;
+    //dedt_ion /= total_ion_density; // don't need this
+    //dedx_ion /= total_ion_density;
 
     // electron slowing down
-    double electron_number_density = electron_density / background_molar_mass * rtt_units::AVOGADRO; // atoms/cc
+    //electron_number_density = electron_density / background_molar_mass * rtt_units::AVOGADRO; // atoms/cc
+    //std::cout << "e number density: " << electron_number_density << std::endl;
     electron_number_density = 3.011e24; // FIX: kludge
     std::string electron_species = "e";
     double electron_mass = species_2_mass(electron_species);
@@ -571,6 +604,91 @@ void spitzer_csd(Particle& p, double& dedt_electron, double& dedx_electron, doub
     dedt_electron = eloss_electron.getEloss(local_material.electron_temperature, electron_number_density, projectile_speed); // keV/shk
     dedx_electron = dedt_electron / projectile_speed; //(projectile_speed*1e8 * 1e-8/keV);  // keV/cm?
 
+}
+
+
+void select_scattering(Particle p, Material local_material, double& dist_scatter, int& scatter_index) {
+    if (garage.scattering_model == "gfp2_rutherford") {
+        //for (int species_it = 0; species_it < local_material.species.size(); ++species_it){ // FIX: loop doesn't work currently
+            //std::string target_name = local_material.species[species_it];
+            //double z_target = species_2_z(target_name);
+            //double a_target = species_2_molar_mass(target_name);
+            //double sp_analytic = stopping_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
+            //double straggling_analytic = straggling_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
+            double sp_analytic = stopping_analytic_rutherford(p, 7, 14.0, 1.0); // FIX: kludge using nitrogen
+            double straggling_analytic = straggling_analytic_rutherford(p, 7, 14.0, 1.0);
+
+            double ion_xs = 2*sp_analytic*sp_analytic / straggling_analytic; // cm^-1
+            double ion_dist = -log(p.rng.uniform()) / ion_xs; // cm
+
+            if (ion_dist < dist_scatter) {
+                dist_scatter = ion_dist;
+                //scatter_index = species_it;
+            }
+        //}
+
+    } else {
+        dist_scatter = 1e10;
+    }
+}
+
+void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss) {
+    if (garage.scattering_model == "gfp2_rutherford") {
+        //std::string target_name = local_material.species[species_it]; // FIX: broken for now
+        //double z_target = species_2_z(target_name);
+        //double a_target = species_2_molar_mass(target_name);
+        //double sp_analytic = stopping_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
+        //double straggling_analytic = straggling_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
+        double straggling_analytic = straggling_analytic_rutherford(p, 7, 14.0, 1.0);
+
+        scattering_energy_loss = -straggling_analytic*log(p.rng.uniform());
+
+    } else {
+        scattering_energy_loss = 0;
+    }
+}
+
+
+double scattering_xs_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target) {
+    double beta_sq = (p.speed / 2.9979245e2) * (p.speed / 2.9979245e2); // speed of light in cm/shk
+    int z_projectile = species_2_z(p.species);
+    double q_min = mean_excitation_energy_approximation(z_target);
+    double q_max = 1.022*1e3*beta_sq / (1-beta_sq);
+
+    double xs = 0.1536*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
+            ((1/q_min - 1/q_max) - beta_sq/q_max * log(q_max/q_min));
+    std::cout << "scattering xs: " << xs << std::endl;
+    return xs;
+}
+
+double stopping_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target) {// density g/cc
+    //std::cout << "  particle speed: " << p.speed << std::endl;
+    double beta_sq = (p.speed / 2.9979245e2) * (p.speed / 2.9979245e2); // speed of light in cm/shk
+    //std::cout << "  betasq: " << beta_sq << std::endl;
+    int z_projectile = species_2_z(p.species);
+    double q_min = mean_excitation_energy_approximation(z_target);
+    //std::cout << "  mei: " << q_min << std::endl;
+    double q_max = 1.022*1e3*beta_sq / (1-beta_sq);
+    //std::cout << "  q_max: " << q_max << std::endl;
+
+    double stopping_power = 0.1536*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
+            (log(q_max/q_min) - beta_sq*(1-q_max/q_min));
+    std::cout << "  stopping power: " << stopping_power << std::endl;
+    return stopping_power;
+}
+
+
+double straggling_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target){ // density g/cc
+    double beta_sq = (p.speed / 2.9979245e2) * (p.speed / 2.9979245e2); // speed of light in cm/shk
+    int z_projectile = species_2_z(p.species);
+    double q_min = mean_excitation_energy_approximation(z_target);
+    double q_max = 1.022*1e3*beta_sq / (1-beta_sq);
+
+    double straggling = 0.1536*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
+            (q_max*(1-beta_sq/2) - q_min*(1-beta_sq*q_min / (q_max*2)));
+
+    std::cout << "  straggling: " << straggling << std::endl;
+    return straggling;
 }
 
 
