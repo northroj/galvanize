@@ -26,7 +26,7 @@ void nudge_into_cell(double &coord, double lo, double hi, double raw_eps);
 
 void spitzer_csd(class Particle& p, double& dedt_electron, double& dedx_electron, double& dedt_ion, double& dedx_ion);
 
-void select_scattering(Particle p, Material local_material, double& dist_scatter, int& scatter_index);
+void select_scattering(Particle& p, Material local_material, double& dist_scatter, int& scatter_index);
 
 void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss);
 
@@ -35,6 +35,14 @@ double stopping_analytic_rutherford(Particle& p, int z_target, double a_target, 
 double straggling_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
 
 std::unordered_map<std::string, double> average_energy_by_species(const std::vector<Particle>& bank);
+
+double source_time_cdf(double t);
+
+double sample_source_time_in_interval(double a, double b);
+
+int draw_num_source_particles_for_step(double t0, double t1);
+
+int draw_binomial_from_uniform(int N, double p);
 
 void source_particles(double time_start, double time_census);
 

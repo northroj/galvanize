@@ -53,9 +53,11 @@ int main(int argc, char** argv) try {
 
     std::cout.setf(std::ios::fixed);
     std::cout.precision(6);
-    std::cout << "Simulation time: " << sim_s   << " s\n";
-    std::cout << "Total time     : " << total_s << " s\n";
-    std::cout << "Lost particles: " << garage.lost_particles << std::endl;
+    if (garage.verbosity >= 1) {
+        std::cout << "Simulation time: " << sim_s   << " s\n";
+        std::cout << "Total time     : " << total_s << " s\n";
+        std::cout << "Lost particles: " << garage.lost_particles << std::endl;
+    }
 
     if (!write_output(cli.output, sim_s, total_s)) {
         return EXIT_FAILURE;

@@ -339,6 +339,8 @@ bool parse_input_file(const std::filesystem::path& path) {
                 } else if (tok[0] == "electron_temperature" && tok.size() == 2) {
                     mat.electron_temperature = std::stod(tok[1]);
                     mat_active = true;
+                } else if (tok[0] == "electron_density" && tok.size() == 2) {
+                    mat.electron_density = std::stod(tok[1]);
                 } else if (tok[0] == "particles" && tok.size() >= 2) {
                     mat.species.assign(tok.begin() + 1, tok.end());
                     mat_active = true;
@@ -367,6 +369,11 @@ bool parse_input_file(const std::filesystem::path& path) {
                 } else if (tok[0] == "time") {
                     if (tok[1] == "point") {
                         garage.source_time = std::stod(tok[2]);
+                        garage.source_time_type = "point";
+                    } else if (tok[1] == "uniform") {
+                        garage.source_time_vector.push_back(std::stod(tok[2]));
+                        garage.source_time_vector.push_back(std::stod(tok[3]));
+                        garage.source_time_type = "uniform";
                     }
                 } else if (tok[0] == "energy") {
                     if (tok[1] == "point") {
@@ -483,6 +490,8 @@ bool parse_input_file(const std::filesystem::path& path) {
                     garage.csd_model = tok[1];
                 } else if (tok[0] == "scattering_model" && tok.size() == 2) {
                     garage.scattering_model = tok[1];
+                } else if (tok[0] == "verbosity" && tok.size() == 2) {
+                    garage.verbosity = std::stoi(tok[1]);
                 } else {
                     std::cerr << "WARN: Unrecognized settings line: " << line << "\n";
                 }            

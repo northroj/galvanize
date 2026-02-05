@@ -51,6 +51,7 @@ public:
     double ion_temperature      = 0.0;
     double electron_temperature = 0.0;
     double ion_molar_mass = 0.0;
+    double electron_density = 0.0;
 
     // Species store: parallel vectors
     std::vector<std::string> species;          // e.g., {"d","t","a"}
@@ -263,6 +264,11 @@ public:
                       std::string category);
 };
 
+enum class TallyPackage {  // the tally_routine uses this to pass in tally information in a general package
+    test1,
+    test2
+};
+
 
 // ------------------------ Geometry ------------------------------------------
 
@@ -326,3 +332,5 @@ inline int bin_index_from_edge(const std::vector<double>& edges, double x) {
 
 
 double mean_excitation_energy_approximation(int z_target);
+
+double clamp01(double x);

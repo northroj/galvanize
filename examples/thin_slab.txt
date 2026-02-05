@@ -6,7 +6,7 @@ densities 5.0 5.0 0.0
 mat_id 1
 
 [geometry]
-x -0.05 0.001 2 lin
+x -0.05 5 2 lin
 y -1e20 1e20
 z -1e20 1e20
 fill 1
@@ -15,30 +15,22 @@ fill 1
 particle p
 space point 0.0 0.0 0.0
 time point 0.0
-energy point 3500.0
+energy point 1700e3
 strength 1e0
 direction beam 1.0 0.0 0.0
-
-[tallies]
-name test_tally_1
-category csd_energy_loss
-event pathlength
-particles a
-energy_bins 0 10000 99 lin
-x_bins cells
 
 [tallies]
 name escape_energy
 category particle_energy
 event vacuum
 particles p
-energy_bins 3050 3150 999 lin
+energy_bins 1620000 1665000 99 lin
 
 [settings]
-num_particles 10000
+num_particles 1
 timestep_bins 0.0 1e10 0 lin
 dimensions 3
-csd_step 1
-scattering_model gfp2_rutherford
+csd_step 10
+scattering_model csd_rutherford
 verbosity 1
 

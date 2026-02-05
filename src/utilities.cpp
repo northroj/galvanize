@@ -440,6 +440,8 @@ int32_t species_2_zaid(std::string ion_species){
         ion_zaid = 1003;
     } else if (ion_species == "a") {
         ion_zaid = 2004;
+    } else if (ion_species == "p") {
+        ion_zaid = 1001;
     }
     return ion_zaid;
 }
@@ -452,6 +454,8 @@ int species_2_z(std::string ion_species){
         ion_z = 1;
     } else if (ion_species == "a") {
         ion_z = 2;
+    } else if (ion_species == "p") {
+        ion_z = 1;
     }
     return ion_z;
 }
@@ -466,6 +470,8 @@ double species_2_mass(std::string ion_species){
         ion_mass = 6.64465e-24;
     } else if (ion_species == "e") {
         ion_mass = 9.10938291e-28;
+    } else if (ion_species == "p") {
+        ion_mass = 1.6726e-24;
     }
     return ion_mass;
 }
@@ -517,10 +523,38 @@ double compute_mixture_molar_mass(const std::vector<std::string>& species,
 }
 
 
-double particle_energy_2_speed(double energy, double mass) {
+double particle_energy_2_speed_nonrel(double energy, double mass) { // This doesn't work for relativistic speeds, and is not currently used
     double speed = std::sqrt(2.0 * (energy*1e-3 * rtt_units::electronChargeSI * 1e6) / (mass * 1.0e-3)) * 1.0e-8 * 1.0e2; // cm/shk
 
+    if (garage.verbosity >= 10) {
+        std::cout << "particle speed [cm/shk]: " << speed << " energy: " << energy << std::endl;
+    }
     return speed;
+}
+
+double particle_energy_2_speed(double energy_keV, double mass_g) {
+    // constants
+    constexpr double c = 2.99792458e8; // m/s
+
+    // Convert energy keV -> Joules
+    const double K_J = energy_keV * 1.0e3 * rtt_units::electronChargeSI; // (keV->eV) * (J/eV)
+
+    // Convert mass g -> kg
+    const double m_kg = mass_g * 1.0e-3;
+
+    // Rest energy mc^2 in Joules
+    const double mc2_J = m_kg * c * c;
+
+    const double gamma = 1.0 + K_J / mc2_J;
+    const double beta2 = 1.0 - 1.0 / (gamma * gamma);
+
+    // Guard tiny negative from roundoff
+    const double beta = (beta2 > 0.0) ? std::sqrt(beta2) : 0.0;
+
+    const double v_m_per_s = c * beta;
+
+    // m/s -> cm/shake
+    return v_m_per_s * 1.0e2 * 1.0e-8;
 }
 
 
@@ -587,4 +621,8 @@ double mean_excitation_energy_approximation(int z_target){ // keV
         mei = (52.8 + 8.71 * z_target) *1e-3;
     }
     return mei;
+}
+
+double clamp01(double x) {
+    return std::max(0.0, std::min(1.0, x));
 }

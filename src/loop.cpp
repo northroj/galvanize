@@ -43,13 +43,10 @@ static std::mt19937& rng() {
 void simulate() {
 
     // set up time steps
-    //time_step_setup("Uniform"); // TODO: add more type in the future
-    //std::cout << "timestep bins" << std::endl;
-    //for (auto &t : garage.time_step_bins) {
-    //    std::cout << t << " ";
-    //}
-    //std::cout << " " << std::endl;
     garage.num_t_steps = garage.time_step_bins.size()-1;
+
+    // set up external source particle sourcing times
+    garage.source_N_remaining = garage.num_particles;
 
     // set up problem defined binning
     for (auto &t : garage.tallies) {
@@ -184,16 +181,18 @@ void simulate_timestep(int t_it) {
             n_ion += local_material.densities[ion_it] * rtt_units::AVOGADRO / ion_molar_mass;
             n_electron += local_material.densities[ion_it] * rtt_units::AVOGADRO / ion_molar_mass * ion_z;
         }
-        n_electron = 3.011e24; // FIX: kludge
+        n_electron = local_material.electron_density; // FIX: kludge
         // update assuming ideal monatomic gas
         double dtemp_ion = 2.0/3.0 * ion_energy_dep / n_ion;
         double dtemp_electron = 2.0/3.0 * electron_energy_dep / n_electron;
         if (n_ion == 0.0 || n_electron == 0.0) {
-            std::cout << "Error divide by zero: ion/electron density " << std::endl;
+            if (garage.verbosity >= 1) {
+                std::cout << "Error divide by zero: ion/electron density " << std::endl;
+            }
         }
         local_material.ion_temperature += dtemp_ion;
         local_material.electron_temperature += dtemp_electron;
-        //std::cout << "temp update: " << ion_energy_dep << " " << electron_energy_dep << " " << n_ion << " " << n_electron << " " << dtemp_ion << " " << dtemp_electron << std::endl;
+        //std::cout << "material update: " << ion_energy_dep << " " << electron_energy_dep << " " << n_ion << " " << n_electron << " " << dtemp_ion << " " << dtemp_electron << std::endl;
 
         
         // update standard tallies
@@ -210,11 +209,18 @@ void simulate_timestep(int t_it) {
 
     // update user tallies
     const std::string specified_category = "average_particle_energy";
+    const std::string specified_event = "census";
     for (auto &t : garage.tallies) {
+        if (t.tally_event != specified_event) continue;
+
         if (t.tally_category != specified_category) continue;
 
         // get average particle energy in the census bank by species
         const auto avgE = average_energy_by_species(garage.census_bank);
+
+        if (garage.verbosity >= 5){
+            std::cout << "here tally census energy" << std::endl;
+        }
 
         // For each species the tally cares about, if we have that species in the bank,
         // add the *average energy* as the tally amount.
@@ -235,7 +241,9 @@ void simulate_timestep(int t_it) {
     move_append(garage.active_bank, garage.census_bank);
     
     if (garage.num_t_steps < 101 || (t_it + 1) % 10 == 0) {
-        std::cout << "Finished with timestep: " << t_it+1 << std::endl;
+        if (garage.verbosity >= 1) {
+            std::cout << "Finished with timestep: " << t_it+1 << std::endl;
+        }
     }
     
 }
@@ -251,9 +259,12 @@ void transport_particle(Particle& p, double time_census) {
 
     while ( particle_active == 2 ){
 
-        //std::cout << "Particle energy keV: " << p.energy << "  speed: " << p.speed <<  "  time shk: " << p.t << std::endl;
-        //std::cout << "Particle position cm: " << p.x << " " << p.y << " " << p.z << std::endl;
-    
+        if (garage.verbosity >= 7) {
+            std::cout << "Particle energy keV: " << p.energy << "  speed: " << p.speed <<  "  time shk: " << p.t << std::endl;
+            std::cout << "Particle position cm: " << p.x << " " << p.y << " " << p.z << std::endl;
+        }
+        double initial_x = p.x; // TODO: expand to multiple dimensions
+
         // evaluate stopping power dE/dx and dE/dt
         double dedt_electron = 0.0;  // keV/shk
         double dedx_electron = 0.0;  // keV/cm
@@ -262,17 +273,17 @@ void transport_particle(Particle& p, double time_census) {
 
         if ( garage.scattering_model == "csd" ) {
             spitzer_csd(p, dedt_electron, dedx_electron, dedt_ion, dedx_ion);
-        } else if ( garage.scattering_model == "csd_rutherford" ) {
-            dedx_ion = stopping_analytic_rutherford(p, 7, 14.0, 1.0); // FIX: set up for nitrogen at 1 g/cc
+        } else if ( garage.scattering_model == "csd_rutherford" || garage.scattering_model == "gfp2_rutherford" ) {
+            dedx_ion = stopping_analytic_rutherford(p, 74, 184.0, 19.25); // FIX: set up for tungsten
             dedt_ion = dedx_ion / p.speed;
             if (dedx_ion < 0) { // FIX: figure out why it goes negative
                 particle_active = 0;
                 break;
             }
         }
-
-        //std::cout << "spitzer parameters: " << dedt_electron << " " << dedx_electron << " " << dedt_ion << " " << dedx_ion << std::endl;
-
+        if (garage.verbosity >= 8) {
+            std::cout << "slowing down parameters: " << dedt_electron << " " << dedx_electron << " " << dedt_ion << " " << dedx_ion << std::endl;
+        }
         // time for energy loss
         double t_eloss = (csd_step * p.energy) / (dedt_electron + dedt_ion); // shk
         // time to census
@@ -311,8 +322,36 @@ void transport_particle(Particle& p, double time_census) {
             eloss_total = csd_energy_loss;
             double boundary_tolerance = 1.0 + 1e-20;
             if (boundary_cross.next_zone == -1) { // vacuum boundary
-                //std::cout << "vaccuum boundary at: " << p.x << " " << p.y << " " << p.z << std::endl;
+                if (garage.verbosity >= 7) {
+                    std::cout << "vacuum boundary at: " << p.x << " " << p.y << " " << p.z << std::endl;
+                }
                 particle_active = 0;
+
+                // update user tallies
+                const std::string specified_category = "particle_energy";
+                const std::string specified_event = "vacuum";
+                for (auto &t : garage.tallies) {
+                    if (t.tally_event != specified_event) continue;
+
+                    if (t.tally_category != specified_category) continue;
+
+                    if (garage.verbosity >= 9) {
+                        std::cout << "tally here, energy: " << p.energy-eloss_total << " contribution: " << p.weight << std::endl;
+                    }
+                    // For each species the tally cares about
+                    for (const auto &sp : t.species) {
+                        if (p.species == sp) {
+                            double tally_energy = 0.0;
+                            if (garage.scattering_model == "gfp2_rutherford") {
+                                tally_energy = p.energy;
+                            } else {
+                                tally_energy = p.energy-eloss_total;
+                            }
+                            // tally the particle energy
+                            t.add(sp, {{"energy", tally_energy}}, p.weight);
+                        }
+                    }
+                }
             } else if (boundary_cross.next_zone == -2) { // reflective boundary
                 boundary_tolerance = 1.0 - 1e-10;
                 // reverse particle direction
@@ -381,6 +420,20 @@ void transport_particle(Particle& p, double time_census) {
             }
         }
 
+        std::string specified_category_2 = "flux"; // FIXME: do tallies better
+        std::string specified_event_2 = "pathlength";
+        for (auto &t : garage.tallies) {
+            if (t.tally_category == specified_category_2 && t.tally_event == specified_event_2) {
+                // Check if this tally tracks this species
+                if (std::find(t.species.begin(), t.species.end(), p.species) != t.species.end()) {
+                    //std::cout << "here tally" << std::endl;
+                    // PAthlength flux tally
+
+                    t.add_smear(p.species, {{"time", p.t-1e-10, p.t},{"x", initial_x, p.x}}, smallest_distance*p.weight);
+                }
+            }
+        }
+
         // ion energy dep
         double ion_eloss_fraction = dedt_ion / (dedt_ion + dedt_electron);
         garage.standard_tallies[3].add("all", {{"time", p.t}, {"x", p.x}, {"y", p.y}, {"z", p.z}}, eloss_total*ion_eloss_fraction*p.weight);
@@ -390,8 +443,9 @@ void transport_particle(Particle& p, double time_census) {
         // adjust particle energy and speed
         p.energy -= eloss_total;
         double particle_mass = species_2_mass(p.species);
-        p.speed = std::sqrt(2.0 * (p.energy*1e-3 * rtt_units::electronChargeSI * 1e6) / (particle_mass * 1.0e-3)) * 1.0e-8 * 1.0e2;
-        
+        //p.speed = std::sqrt(2.0 * (p.energy*1e-3 * rtt_units::electronChargeSI * 1e6) / (particle_mass * 1.0e-3)) * 1.0e-8 * 1.0e2;
+        p.speed = particle_energy_2_speed(p.energy, particle_mass);
+
         // kill particle if thermalized
         if (p.energy < 1.5*local_material.ion_temperature){
             //std::cout << "thermalized particle" << std::endl;
@@ -407,7 +461,9 @@ void transport_particle(Particle& p, double time_census) {
 
     // if a particle reaches census, add it to the census_bank
     if (particle_active == 1) {
-        //std::cout << "censused particle" << std::endl;
+        if (garage.verbosity >= 7) {
+            std::cout << "censused particle" << std::endl;
+        }
         garage.census_bank.emplace_back(std::move(p));
     }
     // if a secondary is created, add it to the secondary_bank
@@ -594,7 +650,7 @@ void spitzer_csd(Particle& p, double& dedt_electron, double& dedx_electron, doub
     // electron slowing down
     //electron_number_density = electron_density / background_molar_mass * rtt_units::AVOGADRO; // atoms/cc
     //std::cout << "e number density: " << electron_number_density << std::endl;
-    electron_number_density = 3.011e24; // FIX: kludge
+    electron_number_density = local_material.electron_density; // FIX: kludge
     std::string electron_species = "e";
     double electron_mass = species_2_mass(electron_species);
     auto const electron_model(std::make_shared<rtt_cdi_cpeloss::Analytic_Spitzer_Eloss_Model>(
@@ -607,22 +663,16 @@ void spitzer_csd(Particle& p, double& dedt_electron, double& dedx_electron, doub
 }
 
 
-void select_scattering(Particle p, Material local_material, double& dist_scatter, int& scatter_index) {
+void select_scattering(Particle& p, Material local_material, double& dist_scatter, int& scatter_index) {
     if (garage.scattering_model == "gfp2_rutherford") {
-        //for (int species_it = 0; species_it < local_material.species.size(); ++species_it){ // FIX: loop doesn't work currently
-            //std::string target_name = local_material.species[species_it];
-            //double z_target = species_2_z(target_name);
-            //double a_target = species_2_molar_mass(target_name);
-            //double sp_analytic = stopping_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
-            //double straggling_analytic = straggling_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
-            double sp_analytic = stopping_analytic_rutherford(p, 7, 14.0, 1.0); // FIX: kludge using nitrogen
-            double straggling_analytic = straggling_analytic_rutherford(p, 7, 14.0, 1.0);
+            double sp_analytic = stopping_analytic_rutherford(p, 74, 184.0, 19.25); // FIX: kludge using tungsten
+            double straggling_analytic = straggling_analytic_rutherford(p, 74, 184.0, 19.25);
 
-            double ion_xs = 2*sp_analytic*sp_analytic / straggling_analytic; // cm^-1
-            double ion_dist = -log(p.rng.uniform()) / ion_xs; // cm
+            double elec_xs = 2*sp_analytic*sp_analytic / straggling_analytic; // cm^-1
+            double elec_scatter_dist = -log(p.rng.uniform()) / elec_xs; // cm
 
-            if (ion_dist < dist_scatter) {
-                dist_scatter = ion_dist;
+            if (elec_scatter_dist < dist_scatter) {
+                dist_scatter = elec_scatter_dist;
                 //scatter_index = species_it;
             }
         //}
@@ -634,14 +684,18 @@ void select_scattering(Particle p, Material local_material, double& dist_scatter
 
 void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss) {
     if (garage.scattering_model == "gfp2_rutherford") {
-        //std::string target_name = local_material.species[species_it]; // FIX: broken for now
-        //double z_target = species_2_z(target_name);
-        //double a_target = species_2_molar_mass(target_name);
-        //double sp_analytic = stopping_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
-        //double straggling_analytic = straggling_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
-        double straggling_analytic = straggling_analytic_rutherford(p, 7, 14.0, 1.0);
 
-        scattering_energy_loss = -straggling_analytic*log(p.rng.uniform());
+        double sp_analytic = stopping_analytic_rutherford(p, 74, 184.0, 19.25);
+        //double straggling_analytic = straggling_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
+        double straggling_analytic = straggling_analytic_rutherford(p, 74, 184.0, 19.25);
+
+        double beta = straggling_analytic / (2.0 * sp_analytic);
+
+        scattering_energy_loss = - beta * log(p.rng.uniform()); // / (2*sp_analytic ) 
+
+        if (garage.verbosity >= 8) {
+            std::cout << "gfp2 scattering energy loss: " << scattering_energy_loss << std::endl;
+        }
 
     } else {
         scattering_energy_loss = 0;
@@ -652,12 +706,12 @@ void scattering_collision_analytic(Particle& p, Material local_material, int spe
 double scattering_xs_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target) {
     double beta_sq = (p.speed / 2.9979245e2) * (p.speed / 2.9979245e2); // speed of light in cm/shk
     int z_projectile = species_2_z(p.species);
-    double q_min = mean_excitation_energy_approximation(z_target);
+    double q_min = mean_excitation_energy_approximation(z_target); // do I need to convert back to eV???
     double q_max = 1.022*1e3*beta_sq / (1-beta_sq);
 
-    double xs = 0.1536*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
+    double xs = 0.1536*1e3*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
             ((1/q_min - 1/q_max) - beta_sq/q_max * log(q_max/q_min));
-    std::cout << "scattering xs: " << xs << std::endl;
+    //std::cout << "scattering xs: " << xs << std::endl;
     return xs;
 }
 
@@ -671,9 +725,11 @@ double stopping_analytic_rutherford(Particle& p, int z_target, double a_target, 
     double q_max = 1.022*1e3*beta_sq / (1-beta_sq);
     //std::cout << "  q_max: " << q_max << std::endl;
 
-    double stopping_power = 0.1536*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
-            (log(q_max/q_min) - beta_sq*(1-q_max/q_min));
-    std::cout << "  stopping power: " << stopping_power << std::endl;
+    double stopping_power = 0.1536*1e3*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
+            (log(q_max/q_min) - beta_sq) *(1-q_min/q_max); // 
+    if (garage.verbosity >= 8) {
+        std::cout << "  rutherford stopping power: " << stopping_power << std::endl;
+    }
     return stopping_power;
 }
 
@@ -684,10 +740,12 @@ double straggling_analytic_rutherford(Particle& p, int z_target, double a_target
     double q_min = mean_excitation_energy_approximation(z_target);
     double q_max = 1.022*1e3*beta_sq / (1-beta_sq);
 
-    double straggling = 0.1536*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
-            (q_max*(1-beta_sq/2) - q_min*(1-beta_sq*q_min / (q_max*2)));
+    double straggling = 0.1536*1e3*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
+            (q_max*(1-beta_sq/2) - q_min*(1-beta_sq*q_min / (2*q_max)));
 
-    std::cout << "  straggling: " << straggling << std::endl;
+    if (garage.verbosity >= 8) {
+        std::cout << "  rutherford straggling: " << straggling << std::endl;
+    }
     return straggling;
 }
 
@@ -716,7 +774,165 @@ average_energy_by_species(const std::vector<Particle>& bank)
 }
 
 
+
+void tally_routine( std::string specified_event, std::vector<double> ) {
+
+    // FIXME: currently unimplemented
+
+    for (auto &t : garage.tallies) {
+        if (t.tally_event != specified_event) continue;
+    }
+}
+
+
+double source_time_cdf(double t) {
+    if (garage.source_time_type == "point") {
+        // CDF of a delta at source_time: 0 for t < t0, 1 for t >= t0
+        return (t < garage.source_time) ? 0.0 : 1.0;
+    }
+
+    if (garage.source_time_type == "uniform") {
+        // interpret source_time_vector as {tmin, tmax}
+        const double tmin = garage.source_time_vector.at(0);
+        const double tmax = garage.source_time_vector.at(1);
+        if (t <= tmin) return 0.0;
+        if (t >= tmax) return 1.0;
+        return (t - tmin) / (tmax - tmin);
+    }
+
+    //FIXME add more distributions
+    return 0.0;
+}
+
+// sample t from the distribution conditioned on t in [a,b)
+double sample_source_time_in_interval(double a, double b) {
+    if (garage.source_time_type == "point") {
+        return garage.source_time; // caller should only ask when interval contains it
+    }
+
+    if (garage.source_time_type == "uniform") {
+        // uniform restricted to [a,b)
+        const double u = garage.rng.uniform();
+        return a + u * (b - a);
+    }
+
+    // future: inverse-CDF on a tabulated CDF, or rejection sampling
+    return a;
+}
+
+int draw_binomial_from_uniform(int N, double p) {
+    int k = 0;
+    for (int i = 0; i < N; ++i) {
+        if (garage.rng.uniform() < p) {
+            ++k;
+        }
+    }
+    return k;
+}
+
+int draw_num_source_particles_for_step(double t0, double t1) {
+    if (garage.source_time_type == "point") {
+        const double tp = garage.source_time;
+        if (tp >= t0 && tp < t1) {
+            int n = garage.source_N_remaining;
+            garage.source_N_remaining = 0;
+            return n;
+        }
+        return 0;
+    }
+
+    // FIXME currently set up for uniform sources. Might need to add more if statements if more distributions are added
+
+    if (garage.source_N_remaining <= 0) return 0;
+
+    const double F0 = clamp01(source_time_cdf(t0));
+    const double F1 = clamp01(source_time_cdf(t1));
+
+    //std::cout << "here 5: " << F0 << " " << F1 << std::endl;
+
+    // mass in this timestep
+    double m_step = F1 - F0;
+    if (m_step <= 0.0) return 0;
+
+    // mass remaining after t0
+    double m_rem = 1.0 - F0;
+    if (m_rem <= 0.0) {
+        // distribution already fully in the past; nothing more to source
+        return 0;
+    }
+
+    double p = m_step / m_rem;
+    p = clamp01(p);
+
+    // If this is the last timestep that reaches the end of the distribution support just dump all remaining
+    // FIXME: do something better here
+    if (garage.source_time_type == "uniform") {
+        const double tmax = garage.source_time_vector.at(1);
+        if (t1 >= tmax) {
+            int n = garage.source_N_remaining;
+            garage.source_N_remaining = 0;
+            return n;
+        }
+    }
+
+    // Binomial draw for general streaming allocation
+    int n = draw_binomial_from_uniform(garage.source_N_remaining, p);
+    garage.source_N_remaining -= n;
+    return n;
+}
+
 void source_particles(double time_start, double time_census) {
+
+    // Decide how many particles to create this timestep
+    const int n_to_create = draw_num_source_particles_for_step(time_start, time_census);
+    if (garage.verbosity >= 5) {
+        std::cout << "created " << n_to_create << " particles this timestep" << std::endl;
+    }
+    if (n_to_create <= 0) return;
+
+    const double particle_weight = (garage.source_strength / garage.num_particles);
+
+    for (int source_it = 0; source_it < n_to_create; ++source_it) {
+        Particle p;
+        p.species = garage.source_particle;
+
+        // location
+        p.x = garage.source_point[0];
+        p.y = garage.source_point[1];
+        p.z = garage.source_point[2];
+
+        // direction
+        if (garage.source_direction_category == "isotropic") {
+            double mu  = garage.rng.uniform() * 2.0 - 1.0;
+            double phi = garage.rng.uniform(); // if this is [0,1), multiply by 2*pi inside from_mu_phi
+            p.dir.from_mu_phi(mu, phi);
+        } else if (garage.source_direction_category == "beam") {
+            p.dir.ux = garage.source_direction[0];
+            p.dir.uy = garage.source_direction[1];
+            p.dir.uz = garage.source_direction[2];
+        }
+        p.dir.normalize();
+
+        // time: sample conditional on this timestep
+        // (for point sources this will just return the point time, and we only call it in the containing step)
+        p.t = sample_source_time_in_interval(time_start, time_census);
+
+        // other
+        p.energy = garage.source_energy;
+        p.weight = particle_weight;
+
+        const double projectile_mass = species_2_mass(p.species);
+        p.speed = particle_energy_2_speed(p.energy, projectile_mass);
+
+        p.zone = locate_cell_id(p.x, p.y, p.z);
+
+        p.start_particle_rng();
+        p.id = garage.total_particles_created++;
+        garage.active_bank.emplace_back(p);
+    }
+}
+
+void source_particles_old(double time_start, double time_census) {
     
     double particle_weight = (garage.source_strength/garage.num_particles);
 

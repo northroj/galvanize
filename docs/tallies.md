@@ -26,6 +26,7 @@ Available tally triggering events
 |--------|-------------|
 | `pathlength` | Triggered after every time a particle is moved |
 | `timestep` | Triggered at the end of the timestep (after the census bank is dumped into the active bank) |
+| `escape` | Triggered as a particle is killed by a vacuum boundary |
 
 <br>
 
@@ -37,6 +38,7 @@ Available tally categories
 |--------|-----|--------|
 | `csd_energy_loss` | Tallies energy lost to continuous slowing down mechanisms | `pathlength` |
 | `average_particle_energy` | Tallies the weighted average energy across particles in the active bank (currently only the particles filter works) | `timestep` |
+| `particle_energy` | Tallies the energy distribution of particles (requires a user energy grid) | `escape` |
 
 
 <br>

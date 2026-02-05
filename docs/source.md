@@ -26,6 +26,7 @@ Defines the initial particle source conditions for the simulation. Currently, on
 | Time category | Type | Description |
 |--------|------|-------------|
 | `point` | float | Emission time in shakes |
+| `uniform` | float float | Uniform emission over the time contained by the start and end time |
 
 <br>
 

@@ -1,0 +1,37 @@
+[materials]
+ion_temperature 20
+electron_temperature 20
+electron_density 1.5055e24
+particles d
+densities 5.0
+mat_id 1
+
+[geometry]
+x 0.0 0.1 99 lin
+y -1e20 1e20
+z -1e20 1e20
+fill 1
+
+[source]
+particle p
+space point 0.0 0.0 0.0
+time uniform 0.0 0.0025
+energy point 10000.0
+strength 400e18
+direction beam 1.0 0.0 0.0
+
+[tallies]
+name test_tally_2
+category flux
+event pathlength
+particles p
+time_bins timesteps
+x_bins cells
+
+[settings]
+num_particles 10000
+timestep_bins 0.0 0.0025 24 lin
+dimensions 3
+csd_step 10
+csd_model spitzer
+verbosity 1

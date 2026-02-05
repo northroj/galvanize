@@ -10,7 +10,8 @@ Controls global simulation settings and run-time parameters. This block is not r
 | `dimensions` | int (default = 3) | Affects physics in spatial dimensions (0D-3D). 1D must be x, 2D must be xy.|
 | `csd_step` | float (default = 1) | Percentage of the particle's energy to lose per CSD step (1 = 1%) |
 | `csd_model` | string | Which model to use for CSD (only spitzer available right now) |
-| `scattering_model` | string | Which model to use for scattering. Default = "csd". Options: csd, gfp2 (not yet implemented) |
+| `scattering_model` | string | Which model to use for scattering. Default = "csd" (for plasma physics using draco). Options: csd_rutherford, gfp2_rutherford (not yet implemented) |
+| `verbosity` | int (default = 1) | Enable print statements: 0 = nothing, 10 = all, 7 = particle track level, 4 = timestep level |
 
 ---
 

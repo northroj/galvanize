@@ -33,6 +33,7 @@ struct Garage {
 
 
     // ---- settings & bookkeeping ----
+    int verbosity = 0;
     int    num_particles     = 0;
     int    num_t_steps       = 0;
     double t_step_size       = 0.0;
@@ -43,6 +44,7 @@ struct Garage {
     double csd_step = 1;
     std::string csd_model = "spitzer";
     std::string scattering_model = "csd";
+    double electron_density = 1.5055e24;
 
     // Tallies
     std::vector<Tally>    tallies;
@@ -52,11 +54,14 @@ struct Garage {
     // Source fields
     std::string         source_particle;        // e.g., "a"
     std::array<double,3> source_point{0.0,0.0,0.0}; // x,y,z
+    std::string         source_time_type = "point";
     double              source_time = 0.0;
+    std::vector<double> source_time_vector;
     double              source_energy = 0.0;
     std::string source_direction_category = "isotropic";
     std::array<double,3> source_direction{1.0,0.0,0.0};
     double source_strength = 1; // particles/cc (per second if applicable)
+    int    source_N_remaining = 0;
 };
 
 extern Garage garage; // declaration only

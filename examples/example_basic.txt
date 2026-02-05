@@ -1,6 +1,7 @@
 [materials]
 ion_temperature 25
 electron_temperature 25
+electron_density 3.011e24
 particles d t a
 densities 5.0 5.0 0.0
 mat_id 1
@@ -31,14 +32,15 @@ x_bins cells
 [tallies]
 name test_tally_2
 category average_particle_energy
-event timestep
+event census
 particles a
 time_bins timesteps
 
 [settings]
-num_particles 1
+num_particles 10
 timestep_bins 0.0 0.01 99 lin
 dimensions 3
 csd_step 10
 csd_model spitzer
+verbosity 5
 
