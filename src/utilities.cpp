@@ -623,6 +623,21 @@ double mean_excitation_energy_approximation(int z_target){ // keV
     return mei;
 }
 
+
+double plasma_rutherford_mu_min(double a_ratio){
+    double mu_min = 0.0;
+    double eps = 1e-10;
+    if (a_ratio > 1.0 + eps) { // if A > 1
+        return -1.0;
+    } else if (std::abs(a_ratio - 1.0)<= eps) { // if A == 1
+        return std::sqrt(2.0) / 2.0;
+    } else { // A < 1
+        double val = 1.0 - a_ratio*a_ratio;
+        val = (val < 0.0) ? 0.0 : val;
+        return std::sqrt(val);
+    }
+}
+
 double clamp01(double x) {
     return std::max(0.0, std::min(1.0, x));
 }

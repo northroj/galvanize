@@ -34,6 +34,9 @@ double scattering_xs_analytic_rutherford(Particle& p, int z_target, double a_tar
 double stopping_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
 double straggling_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
 
+double stopping_plasma_rutherford(Particle& p, int z_target, double a_target, double rho_target);
+double straggling_plasma_rutherford(Particle& p, int z_target, double a_target, double rho_target);
+
 std::unordered_map<std::string, double> average_energy_by_species(const std::vector<Particle>& bank);
 
 double source_time_cdf(double t);
