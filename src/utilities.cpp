@@ -121,6 +121,27 @@ void Tally::finalize() {
     }
 
     counts.resize(nd_dims, 0.0);
+    counts_sq.resize(nd_dims, 0.0);
+    history_counts.resize(nd_dims, 0.0);
+    rel_error.resize(nd_dims, 0.0);
+    figure_of_merit.resize(nd_dims, 0.0);
+}
+
+void Tally::reset_history_scores() {
+    std::fill(history_counts.data.begin(), history_counts.data.end(), 0.0);
+}
+
+void Tally::commit_history_scores() {
+    if (counts.data.size() != history_counts.data.size() ||
+        counts_sq.data.size() != history_counts.data.size()) {
+        throw std::runtime_error("Tally::commit_history_scores: array size mismatch.");
+    }
+
+    for (size_t i = 0; i < history_counts.data.size(); ++i) {
+        const double x = history_counts.data[i];
+        counts.data[i]    += x;
+        counts_sq.data[i] += x * x;
+    }
 }
 
 
@@ -170,7 +191,7 @@ bool Tally::add(const std::string& sp,
     }
 
     // 4) Accumulate
-    counts.at(idx) += contribution;
+    history_counts.at(idx) += contribution;
     return true;
 }
 
@@ -297,7 +318,8 @@ bool Tally::add_smear(const std::string& sp,
 
         if (!valid) continue;
 
-        counts.at(idx) += contribution * frac;
+        const double partial = contribution * frac;
+        history_counts.at(idx)    += partial;
         any = true;
     }
 
@@ -456,6 +478,8 @@ int species_2_z(std::string ion_species){
         ion_z = 2;
     } else if (ion_species == "p") {
         ion_z = 1;
+    } else if (ion_species == "w") {
+        ion_z = 74; // tungsten
     }
     return ion_z;
 }
@@ -486,6 +510,8 @@ double species_2_molar_mass(std::string ion_species){
         ion_mass = 4.002602;    // g/mol (helium-4)
     } else if (ion_species == "p") {
         ion_mass = 1.007276;    // g/mol (proton)
+    } else if (ion_species == "w") {
+        ion_mass = 184.0; // g/mol (tungsten)
     } else {
         std::cerr << "WARN: Unknown ion species \"" << ion_species
                   << "\". Returning 0 molar mass.\n";
@@ -640,4 +666,102 @@ double plasma_rutherford_mu_min(double a_ratio){
 
 double clamp01(double x) {
     return std::max(0.0, std::min(1.0, x));
+}
+
+void split_particle(Particle& p, int n_total, std::vector<Particle>& bank)
+{
+    if (n_total <= 1) {
+        return;
+    }
+
+    double split_weight = p.weight / static_cast<double>(n_total);
+    p.weight = split_weight;
+
+    for (int i = 1; i < n_total; ++i) {
+        Particle child = p;
+        child.weight = split_weight;
+        bank.push_back(child);
+    }
+}
+
+void split_particle_to_target_weight(Particle& p, double target_weight, std::vector<Particle>& bank)
+{
+    if (target_weight <= 0.0) {
+        return;
+    }
+
+    if (p.weight <= target_weight) {
+        return;
+    }
+
+    double exact_n = p.weight / target_weight;
+
+    int n_total = static_cast<int>(std::floor(exact_n));
+    double remainder = exact_n - static_cast<double>(n_total);
+
+    if (garage.rng.uniform() < remainder) {
+        ++n_total;
+    }
+
+    n_total = std::max(1, n_total);
+
+    double new_weight = p.weight / static_cast<double>(n_total);
+    p.weight = new_weight;
+
+    for (int i = 1; i < n_total; ++i) {
+        Particle child = p;
+        child.weight = new_weight;
+        bank.push_back(child);
+    }
+}
+
+bool roulette_particle(Particle& p, double survive_probability)
+{
+    if (survive_probability >= 1.0) {
+        return true;
+    }
+
+    if (survive_probability <= 0.0) {
+        p.weight = 0.0;
+        return false;
+    }
+
+    if (garage.rng.uniform() < survive_probability) {
+        p.weight /= survive_probability;
+        return true;
+    }
+
+    p.weight = 0.0;
+    return false;
+}
+
+bool roulette_particle_to_target_weight(Particle& p, double target_weight)
+{
+    if (target_weight <= 0.0) {
+        p.weight = 0.0;
+        return false;
+    }
+
+    if (p.weight >= target_weight) {
+        return true;
+    }
+
+    double survive_probability = p.weight / target_weight;
+
+    if (survive_probability >= 1.0) {
+        return true;
+    }
+
+    if (survive_probability <= 0.0) {
+        p.weight = 0.0;
+        return false;
+    }
+
+    if (garage.rng.uniform() < survive_probability) {
+        p.weight = target_weight;
+        return true;
+    }
+
+    p.weight = 0.0;
+    return false;
 }

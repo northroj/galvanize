@@ -228,9 +228,16 @@ public:
     std::unordered_map<std::string, int> species_index; // label -> species index
     std::unordered_map<std::string, int> dim_index;     // dim name -> dim slot (0..dims.size()-1)
     NDArray counts;                                     // dims = {S, N0, N1, ...}
+    NDArray counts_sq;       // sum of contribution^2
+    NDArray history_counts;   // temporary score for current history only
+    NDArray rel_error;       // relative error R
+    NDArray figure_of_merit; // 1 / (R^2 * time)
 
     // Build indices and allocate counts
     void finalize();
+
+    void reset_history_scores();
+    void commit_history_scores();
 
     // Return the list of dimension labels (excluding species).
     std::vector<std::string> dimension_labels() const;
@@ -336,3 +343,8 @@ double mean_excitation_energy_approximation(int z_target);
 double plasma_rutherford_mu_min(double a_ratio);
 
 double clamp01(double x);
+
+void split_particle(Particle& p, int n_total, std::vector<Particle>& bank);
+void split_particle_to_target_weight(Particle& p, double target_weight, std::vector<Particle>& bank);
+bool roulette_particle(Particle& p, double survive_probability);
+bool roulette_particle_to_target_weight(Particle& p, double target_weight);

@@ -26,9 +26,14 @@ void nudge_into_cell(double &coord, double lo, double hi, double raw_eps);
 
 void spitzer_csd(class Particle& p, double& dedt_electron, double& dedx_electron, double& dedt_ion, double& dedx_ion);
 
-void select_scattering(Particle& p, Material local_material, double& dist_scatter, int& scatter_index);
+void select_scattering(Particle& p, Material local_material, double& dist_scatter, int& scatter_index, std::vector<double>& gfp_coefficients);
 
-void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss);
+void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss, std::vector<double> gfp_coefficients);
+
+double rutherford_ion_electron_constant(Particle& p, int z_target, double a_target, double rho_target);
+double rutherford_ion_ion_constant(Particle& p, int z_target, double a_target, double rho_target);
+
+double rutherford_dcs_moment(Particle& p, int z_target, double a_target, double rho_target, int order);
 
 double scattering_xs_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
 double stopping_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
@@ -36,6 +41,8 @@ double straggling_analytic_rutherford(Particle& p, int z_target, double a_target
 
 double stopping_plasma_rutherford(Particle& p, int z_target, double a_target, double rho_target);
 double straggling_plasma_rutherford(Particle& p, int z_target, double a_target, double rho_target);
+
+void scatter_particle_forward_peaked(Particle& p);
 
 std::unordered_map<std::string, double> average_energy_by_species(const std::vector<Particle>& bank);
 
@@ -58,3 +65,6 @@ int locate_cell_id(double x, double y, double z);
 
 // Variant that also returns (ix, iy, iz). Returns false if out of bounds.
 bool locate_cell_indices(double x, double y, double z, int &ix, int &iy, int &iz);
+
+void commit_all_tally_history_scores();
+void reset_all_tally_history_scores();

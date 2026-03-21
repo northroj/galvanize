@@ -3,6 +3,7 @@
 #include "utilities.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <random>
 #include <utility>
@@ -134,7 +135,6 @@ void simulate_timestep(int t_it) {
     double time_start = garage.time_step_bins[t_it]; //shk
 
     source_particles(time_start, time_census);
-    //population_control();
     
     // process active bank; when it empties, refill from secondary_bank
     auto& active    = garage.active_bank;
@@ -186,7 +186,7 @@ void simulate_timestep(int t_it) {
         double dtemp_ion = 2.0/3.0 * ion_energy_dep / n_ion;
         double dtemp_electron = 2.0/3.0 * electron_energy_dep / n_electron;
         if (n_ion == 0.0 || n_electron == 0.0) {
-            if (garage.verbosity >= 1) {
+            if (garage.verbosity >= 10) {
                 std::cout << "Error divide by zero: ion/electron density " << std::endl;
             }
         }
@@ -236,9 +236,7 @@ void simulate_timestep(int t_it) {
         }
     }
  
-        
-    // add the census_bank into the active bank for the next time step
-    move_append(garage.active_bank, garage.census_bank);
+    population_control();
     
     if (garage.num_t_steps < 101 || (t_it + 1) % 10 == 0) {
         if (garage.verbosity >= 1) {
@@ -264,6 +262,8 @@ void transport_particle(Particle& p, double time_census) {
             std::cout << "Particle position cm: " << p.x << " " << p.y << " " << p.z << std::endl;
         }
         double initial_x = p.x; // TODO: expand to multiple dimensions
+        double initial_y = p.y;
+        double initial_z = p.x;
 
         // evaluate stopping power dE/dx and dE/dt
         double dedt_electron = 0.0;  // keV/shk
@@ -273,19 +273,12 @@ void transport_particle(Particle& p, double time_census) {
 
         if ( garage.scattering_model == "csd" ) {
             spitzer_csd(p, dedt_electron, dedx_electron, dedt_ion, dedx_ion);
-        } else if ( garage.scattering_model == "csd_rutherford" || garage.scattering_model == "gfp2_rutherford" ) {
-            dedx_ion = stopping_analytic_rutherford(p, 74, 184.0, 19.25); // FIX: set up for tungsten
-            dedt_ion = dedx_ion / p.speed;
-            if (dedx_ion < 0) {
-                particle_active = 0;
-                break;
-            }
-        } else if (garage.scattering_model == "csd_rutherford_plasma" || garage.scattering_model == "gfp2_rutherford_plasma") {
+        } else if ( garage.scattering_model == "rutherford" ) {
             std::string background_species = local_material.species[0]; // FIXME: set up for one particle backgrounds
             double density_background = local_material.densities[0];
             double a_background = species_2_molar_mass(background_species);
             int z_background = species_2_z(background_species);
-            dedx_ion = stopping_plasma_rutherford(p, z_background, a_background, density_background); 
+            dedx_ion = rutherford_dcs_moment(p, z_background, a_background, density_background, 1);
             dedt_ion = dedx_ion / p.speed;
             if (dedx_ion < 0) {
                 particle_active = 0;
@@ -316,14 +309,15 @@ void transport_particle(Particle& p, double time_census) {
         
         double dist_census = t_remaining * (dedt_electron + dedt_ion) / (dedx_electron + dedx_ion);
         double dist_csd = csd_step * p.energy / (dedx_electron + dedx_ion);
-        if (garage.scattering_model == "gfp2_rutherford" || garage.scattering_model == "gfp2_rutherford_plasma") {
+        if (garage.scattering_model == "rutherford" && garage.rutherford_order > 1) {
             dist_csd = 1e10;
         }
         
 
         double dist_scatter = 1e10;
         int scattering_index_local = 1000;
-        select_scattering(p, local_material, dist_scatter, scattering_index_local);
+        std::vector<double> gfp_coefficients;
+        select_scattering(p, local_material, dist_scatter, scattering_index_local, gfp_coefficients);
 
         std::vector<double> distances_to_event = {dist_boundary, dist_csd, dist_census, dist_scatter};
         auto it = std::min_element(distances_to_event.begin(), distances_to_event.end());
@@ -335,7 +329,7 @@ void transport_particle(Particle& p, double time_census) {
             double csd_energy_loss = smallest_distance * (dedx_electron + dedx_ion);
             double time_to_boundary = csd_energy_loss / (dedt_electron + dedt_ion);
             eloss_total = csd_energy_loss;
-            if (garage.scattering_model == "gfp2_rutherford" || garage.scattering_model == "gfp2_rutherford_plasma") {
+            if (garage.scattering_model == "rutherford" && garage.rutherford_order > 1) {
                 eloss_total = 0.0;
             }
             double boundary_tolerance = 1.0 + 1e-20;
@@ -360,7 +354,7 @@ void transport_particle(Particle& p, double time_census) {
                     for (const auto &sp : t.species) {
                         if (p.species == sp) {
                             double tally_energy = 0.0;
-                            if (garage.scattering_model == "gfp2_rutherford" || garage.scattering_model == "gfp2_rutherford_plasma") {
+                            if (garage.scattering_model == "rutherford" && garage.rutherford_order > 1) {
                                 tally_energy = p.energy;
                             } else {
                                 tally_energy = p.energy-eloss_total;
@@ -389,6 +383,57 @@ void transport_particle(Particle& p, double time_census) {
             p.y += smallest_distance * p.dir.uy * boundary_tolerance;
             p.z += smallest_distance * p.dir.uz * boundary_tolerance;
             p.t += time_to_boundary;
+
+            if (garage.vr_method == "importance_point") {
+
+                double x_imp = garage.vr_importance_point[0];
+                double y_imp = garage.vr_importance_point[1];
+                double z_imp = garage.vr_importance_point[2];
+
+                double dx = p.x - x_imp;
+                double dy = p.y - y_imp;
+                double dz = p.z - z_imp;
+                double d_new = sqrt(dx*dx + dy*dy + dz*dz);
+
+                dx = garage.source_point[0] - garage.vr_importance_point[0];
+                dy = garage.source_point[1] - garage.vr_importance_point[1];
+                dz = garage.source_point[2] - garage.vr_importance_point[2];
+                double d_source = sqrt(dx*dx + dy*dy + dz*dz);
+
+                double dist_ratio = d_source / d_new;
+                // used to prevent tiny weights near the point
+                double source_weight = garage.source_strength/static_cast<double>(garage.num_particles);
+
+                double target_weight = source_weight * std::max(0.1*source_weight, d_new / d_source);
+
+                // Small numerical protection
+                double eps = 1.0e-14;
+
+                // Particle moved closer to the importance point -> split
+                if (p.weight > target_weight) {
+
+                    if (garage.verbosity >= 8) {
+                        std::cout << "Split particle"<< std::endl;
+                    }
+
+                    split_particle_to_target_weight(p, target_weight, garage.active_bank);
+                }
+
+                //particle moved farther from the importance point -> roulette
+                else if (p.weight < target_weight) {
+
+                    bool survived = roulette_particle_to_target_weight(p, target_weight);
+
+                    if (!survived) {
+                        if (garage.verbosity >= 8) {
+                            std::cout << "rouletted particle"<< std::endl;
+                        }
+                        particle_active = 0;
+                        p.weight = 0.0;
+                    }
+                }
+
+            } // end vr block
             
         } else if (event_index == 1) { // Full csd step
             eloss_total = csd_step * p.energy;
@@ -414,12 +459,37 @@ void transport_particle(Particle& p, double time_census) {
             p.t += t_remaining; // time
         } else if (event_index == 3) { // scattering collision
             double scattering_eloss = 0;
-            scattering_collision_analytic(p, local_material, scattering_index_local, scattering_eloss);
+            scattering_collision_analytic(p, local_material, scattering_index_local, scattering_eloss, gfp_coefficients);
             p.x += smallest_distance * p.dir.ux;
             p.y += smallest_distance * p.dir.uy;
             p.z += smallest_distance * p.dir.uz;
             p.t += smallest_distance * ( dedx_electron+dedx_ion ) / (dedt_electron+dedt_ion); // TODO: This might be wrong
             eloss_total = scattering_eloss;
+
+            if (garage.angular_scatter == "fake") { // fake scattering for class project
+                scatter_particle_forward_peaked(p);
+            }
+
+            std::string specified_category = "flux"; // FIXME: do tallies better
+            std::string specified_event = "collision";
+            for (auto &t : garage.tallies) {
+                if (t.tally_category == specified_category && t.tally_event == specified_event) {
+                    // Check if this tally tracks this species
+                    if (std::find(t.species.begin(), t.species.end(), p.species) != t.species.end()) {
+                        // collision flux tally
+                        std::string background_species = local_material.species[0]; // FIXME: set up for one particle backgrounds
+                        double density_background = local_material.densities[0];
+                        double a_background = species_2_molar_mass(background_species);
+                        int z_background = species_2_z(background_species);
+                        double sp_analytic = rutherford_dcs_moment(p, z_background, a_background, density_background, 1); 
+                        double straggling_analytic = rutherford_dcs_moment(p, z_background, a_background, density_background, 2);
+                        double alpha = sp_analytic;
+                        double beta = straggling_analytic / (2.0 * sp_analytic);
+                        double gfp_xs = alpha / beta;
+                        t.add(p.species, {{"time", p.t},{"x", p.x},{"y", p.y}, {"z", p.z}, {"energy", p.energy}}, p.weight / gfp_xs);
+                    }
+                }
+            } // end tally block
         }
 
         // calculate energy loss
@@ -449,10 +519,9 @@ void transport_particle(Particle& p, double time_census) {
             if (t.tally_category == specified_category_2 && t.tally_event == specified_event_2) {
                 // Check if this tally tracks this species
                 if (std::find(t.species.begin(), t.species.end(), p.species) != t.species.end()) {
-                    //std::cout << "here tally" << std::endl;
-                    // PAthlength flux tally
+                    // Pathlength flux tally
 
-                    t.add_smear(p.species, {{"time", p.t-1e-10, p.t},{"x", initial_x, p.x}}, smallest_distance*p.weight);
+                    t.add_smear(p.species, {{"time",p.t-1e-10,p.t},{"x",initial_x,p.x},{"y",initial_y,p.y},{"z",initial_z,p.z},{"energy",p.energy,p.energy-eloss_total}}, smallest_distance*p.weight);
                 }
             }
         }
@@ -490,6 +559,10 @@ void transport_particle(Particle& p, double time_census) {
         garage.census_bank.emplace_back(std::move(p));
     }
     // if a secondary is created, add it to the secondary_bank
+
+    // properly tally history based stuff FIXME: breaks non history based tallies
+    commit_all_tally_history_scores();
+    reset_all_tally_history_scores();
     
 }
 
@@ -686,74 +759,198 @@ void spitzer_csd(Particle& p, double& dedt_electron, double& dedx_electron, doub
 }
 
 
-void select_scattering(Particle& p, Material local_material, double& dist_scatter, int& scatter_index) {
-    if (garage.scattering_model == "gfp2_rutherford") {
-        double sp_analytic = stopping_analytic_rutherford(p, 74, 184.0, 19.25); // FIX: kludge using tungsten
-        double straggling_analytic = straggling_analytic_rutherford(p, 74, 184.0, 19.25);
+void select_scattering(Particle& p, Material local_material, double& dist_scatter, int& scatter_index, std::vector<double>& gfp_coefficients) {
+    if (garage.scattering_model == "rutherford") {
 
-        double elec_xs = 2*sp_analytic*sp_analytic / straggling_analytic; // cm^-1
-        double elec_scatter_dist = -log(p.rng.uniform()) / elec_xs; // cm
-
-        if (elec_scatter_dist < dist_scatter) {
-            dist_scatter = elec_scatter_dist;
-            //scatter_index = species_it;
+        if (garage.rutherford_order == 2) {
+            std::string background_species = local_material.species[0]; // FIXME: set up for one particle backgrounds
+            double density_background = local_material.densities[0];
+            double a_background = species_2_molar_mass(background_species);
+            int z_background = species_2_z(background_species);
+            double sp_analytic = rutherford_dcs_moment(p, z_background, a_background, density_background, 1); 
+            double straggling_analytic = rutherford_dcs_moment(p, z_background, a_background, density_background, 2);
+            double alpha = sp_analytic;
+            double beta = straggling_analytic / (2.0 * sp_analytic);
+            if (garage.verbosity >= 8) {
+                std::cout << "gfp2 coefficients: alpha, beta: " << alpha << " " << beta << std::endl;
+            }
+            gfp_coefficients.push_back(alpha);
+            gfp_coefficients.push_back(beta);
+            double xs = alpha / beta; // cm^-1
+            double scatter_dist = -log(p.rng.uniform()) / xs; // cm
+            if (scatter_dist < dist_scatter) {
+                dist_scatter = scatter_dist;
+            }
+        } else if (garage.rutherford_order == 4) {
+            std::string background_species = local_material.species[0]; // FIXME: set up for one particle backgrounds
+            double density_background = local_material.densities[0];
+            double a_background = species_2_molar_mass(background_species);
+            int z_background = species_2_z(background_species);
+            double Q1 = rutherford_dcs_moment(p, z_background, a_background, density_background, 1);
+            double Q2 = rutherford_dcs_moment(p, z_background, a_background, density_background, 2);
+            double Q3 = rutherford_dcs_moment(p, z_background, a_background, density_background, 3);
+            double Q4 = rutherford_dcs_moment(p, z_background, a_background, density_background, 4);
+            if (garage.verbosity >= 8) {
+                std::cout << "gfp4 moments: " << Q1 << " " << Q2 << " " << Q3 << " " << Q4 << std::endl;
+            }
+            // nonlinear solve for the four coefficients
+            double denom_a = -3.0*Q2*Q2 + 2.0*Q1*Q3;
+            double rad =
+                -36.0*Q2*Q2*Q3*Q3
+                + 32.0*Q1*Q3*Q3*Q3
+                + 36.0*Q2*Q2*Q2*Q4
+                - 36.0*Q1*Q2*Q3*Q4
+                + 3.0*Q1*Q1*Q4*Q4;
+            double sqrt3 = std::sqrt(3.0);
+            double sqrt_rad = std::sqrt(rad);
+            double beta2 =
+                (-6.0*Q2*Q3 + 3.0*Q1*Q4 - sqrt3*sqrt_rad) /
+                (12.0*denom_a);
+            double beta1 =
+                (
+                    2.0*Q2*Q3
+                    + (3.0*Q2*Q2*Q2*Q3)/denom_a
+                    - (2.0*Q1*Q2*Q3*Q3)/denom_a
+                    - Q1*Q4
+                    - (3.0*Q1*Q2*Q2*Q4)/(2.0*denom_a)
+                    + (Q1*Q1*Q3*Q4)/denom_a
+                    + (sqrt3*Q2*Q2*sqrt_rad)/(2.0*denom_a)
+                    - (Q1*Q3*sqrt_rad)/(sqrt3*denom_a)
+                ) / (6.0*Q2*Q2 - 4.0*Q1*Q3);
+            double alpha1 =
+                (
+                    18.0*Q2*Q2*Q2*Q2*Q3
+                    - 36.0*Q1*Q2*Q2*Q3*Q3
+                    + 16.0*Q1*Q1*Q3*Q3*Q3
+                    + (54.0*Q2*Q2*Q2*Q2*Q2*Q2*Q3)/denom_a
+                    - (90.0*Q1*Q2*Q2*Q2*Q2*Q3*Q3)/denom_a
+                    + (36.0*Q1*Q1*Q2*Q2*Q3*Q3*Q3)/denom_a
+                    + 9.0*Q1*Q2*Q2*Q2*Q4
+                    - 6.0*Q1*Q1*Q2*Q3*Q4
+                    - (27.0*Q1*Q2*Q2*Q2*Q2*Q2*Q4)/denom_a
+                    + (54.0*Q1*Q1*Q2*Q2*Q2*Q3*Q4)/denom_a
+                    - (24.0*Q1*Q1*Q1*Q2*Q3*Q3*Q4)/denom_a
+                    - (9.0*Q1*Q1*Q1*Q2*Q2*Q4*Q4)/(2.0*denom_a)
+                    + (3.0*Q1*Q1*Q1*Q1*Q3*Q4*Q4)/denom_a
+                    + (9.0*sqrt3*Q2*Q2*Q2*Q2*Q2*sqrt_rad)/denom_a
+                    - (15.0*sqrt3*Q1*Q2*Q2*Q2*Q3*sqrt_rad)/denom_a
+                    + (6.0*sqrt3*Q1*Q1*Q2*Q3*Q3*sqrt_rad)/denom_a
+                    + (3.0*sqrt3*Q1*Q1*Q2*Q2*Q4*sqrt_rad)/(2.0*denom_a)
+                    - (sqrt3*Q1*Q1*Q1*Q3*Q4*sqrt_rad)/denom_a
+                ) / rad;
+            double alpha2 =
+                (
+                    18.0*Q2*Q2*Q2*Q2*Q3
+                    - 16.0*Q1*Q1*Q3*Q3*Q3
+                    + (54.0*Q2*Q2*Q2*Q2*Q2*Q2*Q3)/denom_a
+                    - (90.0*Q1*Q2*Q2*Q2*Q2*Q3*Q3)/denom_a
+                    + (36.0*Q1*Q1*Q2*Q2*Q3*Q3*Q3)/denom_a
+                    - 27.0*Q1*Q2*Q2*Q2*Q4
+                    + 30.0*Q1*Q1*Q2*Q3*Q4
+                    - (27.0*Q1*Q2*Q2*Q2*Q2*Q2*Q4)/denom_a
+                    + (54.0*Q1*Q1*Q2*Q2*Q2*Q3*Q4)/denom_a
+                    - (24.0*Q1*Q1*Q1*Q2*Q3*Q3*Q4)/denom_a
+                    - 3.0*Q1*Q1*Q1*Q4*Q4
+                    - (9.0*Q1*Q1*Q1*Q2*Q2*Q4*Q4)/(2.0*denom_a)
+                    + (3.0*Q1*Q1*Q1*Q1*Q3*Q4*Q4)/denom_a
+                    + (9.0*sqrt3*Q2*Q2*Q2*Q2*Q2*sqrt_rad)/denom_a
+                    - (15.0*sqrt3*Q1*Q2*Q2*Q2*Q3*sqrt_rad)/denom_a
+                    + (6.0*sqrt3*Q1*Q1*Q2*Q3*Q3*sqrt_rad)/denom_a
+                    + (3.0*sqrt3*Q1*Q1*Q2*Q2*Q4*sqrt_rad)/(2.0*denom_a)
+                    - (sqrt3*Q1*Q1*Q1*Q3*Q4*sqrt_rad)/denom_a
+                ) / (-rad);
+            if (garage.verbosity >= 8) {
+                std::cout << "gfp4 coefficients: a1, b1, a2, b2: " << alpha1 << " " << beta1 << " " << alpha2 << " " << beta2 << std::endl;
+            }
+            gfp_coefficients.push_back(alpha1);
+            gfp_coefficients.push_back(beta1);
+            gfp_coefficients.push_back(alpha2);
+            gfp_coefficients.push_back(beta2);
+            double xs = alpha1/beta2 + alpha2/beta1;
+            double scatter_dist = -log(p.rng.uniform()) / xs; // cm
+            if (scatter_dist < dist_scatter) {
+                dist_scatter = scatter_dist;
+            }
         }
-    //}
-
-    } else if (garage.scattering_model == "gfp2_rutherford_plasma") {
-        std::string background_species = local_material.species[0]; // FIXME: set up for one particle backgrounds
-        double density_background = local_material.densities[0];
-        double a_background = species_2_molar_mass(background_species);
-        int z_background = species_2_z(background_species);
-        double sp_analytic = stopping_plasma_rutherford(p, z_background, a_background, density_background); 
-        double straggling_analytic = straggling_plasma_rutherford(p, z_background, a_background, density_background);
-
-        double xs = 2*sp_analytic*sp_analytic / straggling_analytic; // cm^-1
-        double scatter_dist = -log(p.rng.uniform()) / xs; // cm
-        if (scatter_dist < dist_scatter) {
-            dist_scatter = scatter_dist;
-        }
-
-    } else {
+    } else { // no direct scattering model, set the distance large to not sample it
         dist_scatter = 1e10;
     }
 }
 
-void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss) {
-    if (garage.scattering_model == "gfp2_rutherford") {
+void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss, std::vector<double> gfp_coefficients) {
+    if (garage.scattering_model == "rutherford") {
+        if (garage.rutherford_order == 2) {
+            double alpha = gfp_coefficients[0];
+            double beta = gfp_coefficients[1];
+            scattering_energy_loss = - beta * log(p.rng.uniform());
 
-        double sp_analytic = stopping_analytic_rutherford(p, 74, 184.0, 19.25);
-        //double straggling_analytic = straggling_analytic_rutherford(p, z_target, a_target, local_material.densities[species_it]);
-        double straggling_analytic = straggling_analytic_rutherford(p, 74, 184.0, 19.25);
-
-        double beta = straggling_analytic / (2.0 * sp_analytic);
-
-        scattering_energy_loss = - beta * log(p.rng.uniform()); // / (2*sp_analytic ) 
-
-        if (garage.verbosity >= 8) {
-            std::cout << "gfp2 scattering energy loss: " << scattering_energy_loss << std::endl;
+            if (garage.verbosity >= 8) {
+                std::cout << "gfp2 scattering energy loss: " << scattering_energy_loss << std::endl;
+            }
+        } else if (garage.rutherford_order == 4) {
+            double beta1 = gfp_coefficients[1];
+            double beta2 = gfp_coefficients[3];
+            scattering_energy_loss = - (beta1 + beta2)*log(p.rng.uniform());
         }
-
-    } else if (garage.scattering_model == "gfp2_rutherford_plasma"){
-        std::string background_species = local_material.species[0]; // FIXME: set up for one particle backgrounds
-        double density_background = local_material.densities[0];
-        double a_background = species_2_molar_mass(background_species);
-        int z_background = species_2_z(background_species);
-        double sp_analytic = stopping_plasma_rutherford(p, z_background, a_background, density_background); 
-        double straggling_analytic = straggling_plasma_rutherford(p, z_background, a_background, density_background);
-
-        double beta = straggling_analytic / (2.0 * sp_analytic);
-        scattering_energy_loss = - beta * log(p.rng.uniform());
     } else {
         scattering_energy_loss = 0;
     }
+}
+
+double rutherford_ion_electron_constant(Particle& p, int z_target, double a_target, double rho_target) {
+    double beta_sq = (p.speed / 2.9979245e2) * (p.speed / 2.9979245e2); // speed of light in cm/shk
+    int z_projectile = species_2_z(p.species);
+    return 0.1536*1e3*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq);
+}
+
+double rutherford_ion_ion_constant(Particle& p, int z_target, double a_target, double rho_target) {
+
+    return 1.0;
+}
+
+double rutherford_dcs_moment(Particle& p, int z_target, double a_target, double rho_target, int order) {
+
+    double prefix = 0.0;
+    double suffix = 0.0;
+
+    double q_min = 0.0; // min energy transfer
+    double q_max = 0.0; // max
+
+    double beta_sq = (p.speed / 2.9979245e2) * (p.speed / 2.9979245e2);
+
+    if (garage.rutherford_ions == 0){ // hitting electrons
+        prefix = rutherford_ion_electron_constant(p, z_target, a_target, rho_target);
+        q_min = mean_excitation_energy_approximation(z_target);
+        q_max = 1.022*1e3*beta_sq / (1-beta_sq);
+    } else { // hitting ions
+        prefix = rutherford_ion_ion_constant(p, z_target, a_target, rho_target);
+        double a_projectile = species_2_molar_mass(p.species);
+        double a_ratio = a_target / a_projectile;
+        double mu_cut = 1.0 - 1.0e-3;
+        double mu_min = plasma_rutherford_mu_min(a_ratio);
+        double t_factor = 2.0 * p.energy * a_ratio / ((1.0 + a_ratio)*(1.0 + a_ratio));
+        q_min = (1.0 - mu_cut) * t_factor; // min energy loss
+        q_max = (1.0 - mu_min) * t_factor; // max energy loss
+    }
+
+    if (order == 0) { // scattering cross section [cm^-1]
+        suffix = (1.0/q_min - 1.0/q_max) - beta_sq/q_max * log(q_max/q_min);
+    } else if (order == 1) { // stopping power [keV/cm]
+        suffix = log(q_max/q_min) - beta_sq *(1.0-q_min/q_max);
+    } else if (order > 1) { // straggling n = 2 and higher
+        suffix = (1.0/(order - 1.0)) * (std::pow(q_max,order-1)*(1-beta_sq*((order-1.0)/order)) 
+                - std::pow(q_min,order-1)*(1.0-beta_sq * ((order - 1.0)/order) * q_min/q_max));
+    }
+    
+
+    return prefix * suffix;
 }
 
 
 double scattering_xs_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target) {
     double beta_sq = (p.speed / 2.9979245e2) * (p.speed / 2.9979245e2); // speed of light in cm/shk
     int z_projectile = species_2_z(p.species);
-    double q_min = mean_excitation_energy_approximation(z_target); // do I need to convert back to eV???
+    double q_min = mean_excitation_energy_approximation(z_target);
     double q_max = 1.022*1e3*beta_sq / (1-beta_sq);
 
     double xs = 0.1536*1e3*z_projectile*z_projectile*z_target*rho_target / (a_target*beta_sq) *
@@ -847,6 +1044,23 @@ double straggling_plasma_rutherford(Particle& p, int z_target, double a_target, 
     //return n_target * k*k * (t_max - t_min); // kev^2/cm
 
     return straggling;
+}
+
+void scatter_particle_forward_peaked(Particle& p)
+{
+    double peak_strength = 20.0;
+
+    double xi1 = p.rng.uniform();
+    double xi2 = p.rng.uniform();
+
+    // fake angular scattering
+    double mu = 1.0 - (-std::log(std::max(1.0e-12, xi1))) / peak_strength;
+    mu = std::clamp(mu, -1.0, 1.0);
+
+    //Uniform azimuthal
+    double phi = 2.0 * M_PI * xi2;
+
+    p.dir.rotate(mu, phi);
 }
 
 
@@ -1083,39 +1297,47 @@ static double total_weight(const std::vector<Particle>& v) {
 
 
 void population_control() {
-    auto& v = garage.active_bank;
-    const int target_i = std::max(garage.num_particles, 0);
-    const std::size_t target = static_cast<std::size_t>(target_i);
 
-    if (v.size() == target) return;
-    
-    const double W_before = total_weight(v);
-
-    auto& gen = rng();
-
-    if (v.size() > target) {
-        // Randomly eliminate down to target (Fisher�Yates tail shrink)
-        // Shuffle a suffix into the tail, then resize.
-        // Implementation: do a partial shuffle for k = v.size()-target steps.
-        const std::size_t n = v.size();
-        std::uniform_int_distribution<std::size_t> pick(0, n - 1);
-        // Simpler, fine for now: shuffle entire vector and resize
-        std::shuffle(v.begin(), v.end(), gen);
-        v.resize(target);
-    } else {
-        // Duplicate random particles until we reach target
-        std::uniform_int_distribution<std::size_t> pick(0, v.empty() ? 0 : v.size() - 1);
-        while (v.size() < target) {
-            const std::size_t idx = pick(gen);
-            v.push_back(v[idx]); // copy-duplicate
-            // update distribution upper bound as size grows
-            pick = std::uniform_int_distribution<std::size_t>(0, v.size() - 1);
+    if (garage.population_control == "uniform_SS") {
+        int M = garage.num_particles;
+        int N = static_cast<int>(garage.census_bank.size());
+        
+        if (garage.verbosity >= 5) {
+            std::cout << "population control: uniform_SS, converting " << N << " particles to " << M << std::endl;
         }
+
+        if (N == 0) {
+            return;
+        }
+        if (M <= 0) {
+            garage.census_bank.clear();
+            return;
+        }
+
+        double weight_factor = static_cast<double>(N) / static_cast<double>(M);
+
+        for (int it1 = 0; it1 < M; ++it1) {
+            int idx = static_cast<int>(garage.rng.uniform() * N);
+
+            Particle p = garage.census_bank[idx];
+            p.weight *= weight_factor;
+
+            if (garage.verbosity >= 6) {
+                std::cout << "Particle " << idx << " copied to active bank" << std::endl;
+            }
+
+            garage.active_bank.push_back(std::move(p));
+        }
+
+        garage.census_bank.clear();
+
+    } else { // do nothing pc related
+        if (garage.verbosity >= 6) {
+            std::cout << "census bank dumped to active bank" << std::endl;
+        }
+        // add the census_bank into the active bank for the next time step
+        move_append(garage.active_bank, garage.census_bank);
     }
-    
-    double W_after = total_weight(v);
-    const double scale = W_before / W_after;
-    for (auto& p : v) p.weight *= scale;
 }
 
 
@@ -1184,4 +1406,22 @@ int locate_cell_id(double x, double y, double z) {
     const int ny = garage.ny;
     // (nx, ny, nz were set during mesh build)
     return ix + iy * nx + iz * (nx * ny);
+}
+
+void reset_all_tally_history_scores() {
+    for (size_t i = 0; i < garage.standard_tallies.size(); ++i) {
+        garage.standard_tallies[i].reset_history_scores();
+    }
+    for (size_t i = 0; i < garage.tallies.size(); ++i) {
+        garage.tallies[i].reset_history_scores();
+    }
+}
+
+void commit_all_tally_history_scores() {
+    for (size_t i = 0; i < garage.standard_tallies.size(); ++i) {
+        garage.standard_tallies[i].commit_history_scores();
+    }
+    for (size_t i = 0; i < garage.tallies.size(); ++i) {
+        garage.tallies[i].commit_history_scores();
+    }
 }

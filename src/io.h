@@ -19,6 +19,8 @@ bool build_cartesian_mesh_after_parse();
 // Write an HDF5 output file with input, tallies, and timing info.
 bool write_output(const std::filesystem::path& out, double sim_s, double total_s);
 
+bool compute_tally_statistics(double sim_s);
+
 
 size_t mesh_flatten(const Garage& g, int ix, int iy, int iz);
 void   mesh_unflatten(const Garage& g, size_t id, int &ix, int &iy, int &iz);

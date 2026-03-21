@@ -49,6 +49,11 @@ int main(int argc, char** argv) try {
     const auto t1_total = clock_t::now();
 
     const double sim_s   = std::chrono::duration<double>(t1_sim   - t0_sim  ).count();
+
+    if (!compute_tally_statistics(sim_s)) {
+        return EXIT_FAILURE;
+    }
+
     const double total_s = std::chrono::duration<double>(t1_total - t0_total).count();
 
     std::cout.setf(std::ios::fixed);

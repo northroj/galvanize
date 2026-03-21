@@ -37,14 +37,22 @@ struct Garage {
     int    num_particles     = 0;
     int    num_t_steps       = 0;
     double t_step_size       = 0.0;
-    int    current_time_step = 0;   // initialize to 0
+    int    current_time_step = 0;
     std::vector<double> time_step_bins;
     int lost_particles = 0;
     int     dimensions = 3;
     double csd_step = 1;
     std::string csd_model = "spitzer";
     std::string scattering_model = "csd";
+    int rutherford_order = 1;
+    int rutherford_ions = 1; // Kludge until materials improve
     double electron_density = 1.5055e24;
+    std::string angular_scatter = "none";
+
+    // VR settings
+    std::string population_control = "none";
+    std::string vr_method = "none";
+    std::vector<double> vr_importance_point = {0.0, 0.0, 0.0};
 
     // Tallies
     std::vector<Tally>    tallies;

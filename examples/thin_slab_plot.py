@@ -36,9 +36,12 @@ def extract_tally(file_name):
 csd_bins, csd_counts = extract_tally(csd_file)
 gfp2_bins, gfp2_counts = extract_tally(gfp2_file)
 
+test_bins, test_counts = extract_tally("test_newgfp.h5")
+
 plt.figure(1)
 plt.plot(csd_bins[1:], csd_counts[0,:], color="red", label="csd")
 plt.plot(gfp2_bins[1:], gfp2_counts[0,:], color="blue", label="gfp2")
+plt.plot(test_bins[1:], test_counts[0,:], color="green", label="test")
 plt.xlim([x1, x2])
 #plt.ylim(bottom=1e-4, top=None)
 plt.xlabel("Energy [keV]")

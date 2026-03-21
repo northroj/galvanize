@@ -108,17 +108,23 @@ static std::vector<double> make_bins(double lo, double hi, int divs, bool logspa
 static bool parse_bins_spec(const std::vector<std::string>& tok,
                             std::vector<double>& out_edges) {
     // expected: <key> <lo> <hi> <divs> <lin|log>
-    if (tok.size() != 5) return false;
-    double lo = std::stod(tok[1]);
-    double hi = std::stod(tok[2]);
-    int    dv = std::stoi(tok[3]);
+    if (tok.size() == 5 ) {
+        double lo = std::stod(tok[1]);
+        double hi = std::stod(tok[2]);
+        int    dv = std::stoi(tok[3]);
 
-    std::string mode = tok[4];
-    for (auto &c : mode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    bool logspace = (mode == "log" || mode == "log10" || mode == "logspace");
+        std::string mode = tok[4];
+        for (auto &c : mode) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        bool logspace = (mode == "log" || mode == "log10" || mode == "logspace");
 
-    out_edges = make_bins(lo, hi, dv, logspace);
-    return true;
+        out_edges = make_bins(lo, hi, dv, logspace);
+        return true;
+    } else if (tok.size() == 3) {
+        out_edges = {std::stod(tok[1]), std::stod(tok[2])};
+        return true;
+    } else { // bad bin spec
+        return false;
+    }
 }
 
 static bool is_number(const std::string &s) {
@@ -490,8 +496,23 @@ bool parse_input_file(const std::filesystem::path& path) {
                     garage.csd_model = tok[1];
                 } else if (tok[0] == "scattering_model" && tok.size() == 2) {
                     garage.scattering_model = tok[1];
+                } else if (tok[0] == "rutherford_order") {
+                    garage.rutherford_order = std::stoi(tok[1]);
+                } else if (tok[0] == "rutherford_ions") {
+                    garage.rutherford_ions = std::stoi(tok[1]);
                 } else if (tok[0] == "verbosity" && tok.size() == 2) {
                     garage.verbosity = std::stoi(tok[1]);
+                } else if (tok[0] == "angular_scatter") {
+                    garage.angular_scatter = tok[1];
+                } else if (tok[0] == "population_control") {
+                    garage.population_control = tok[1];
+                } else if (tok[0] == "vr_method") {
+                    garage.vr_method = tok[1];
+                    if (garage.vr_method == "importance_point" && tok.size() == 5) {
+                        garage.vr_importance_point[0] = std::stod(tok[2]);
+                        garage.vr_importance_point[1] = std::stod(tok[3]);
+                        garage.vr_importance_point[2] = std::stod(tok[4]);
+                    }
                 } else {
                     std::cerr << "WARN: Unrecognized settings line: " << line << "\n";
                 }            
@@ -756,6 +777,9 @@ static bool write_tally_block(hid_t parent_group, const std::vector<Tally>& tall
 
         // Counts array (same as before; NDArray now has shape {S, dim0_bins, dim1_bins, ...})
         ok_local = ok_local && h5_write_ndarray_counts(g_one, "counts", t.counts);
+        ok_local = ok_local && h5_write_ndarray_counts(g_one, "counts_sq",       t.counts_sq);
+        ok_local = ok_local && h5_write_ndarray_counts(g_one, "relative_error",  t.rel_error);
+        ok_local = ok_local && h5_write_ndarray_counts(g_one, "figure_of_merit", t.figure_of_merit);
 
         H5Gclose(g_one);
         if (!ok_local) break;
@@ -841,5 +865,87 @@ bool write_output(const std::filesystem::path& out, double sim_s, double total_s
         std::cerr << "ERROR: Failed writing one or more datasets/groups to: " << out << "\n";
         return false;
     }
+    return true;
+}
+
+bool compute_tally_statistics(double sim_s) {
+    if (garage.num_particles <= 1) {
+        std::cerr << "ERROR: compute_tally_statistics requires num_particles > 1.\n";
+        return false;
+    }
+    if (sim_s <= 0.0) {
+        std::cerr << "ERROR: compute_tally_statistics requires simulation time > 0.\n";
+        return false;
+    }
+
+    const double N = static_cast<double>(garage.num_particles);
+
+    auto process_one_tally_vector = [N, sim_s](std::vector<Tally>& tallies_vec) {
+        for (size_t t = 0; t < tallies_vec.size(); ++t) {
+            Tally& tally = tallies_vec[t];
+
+            if (tally.counts.data.size() != tally.counts_sq.data.size()) {
+                std::cerr << "ERROR: tally \"" << tally.tally_name
+                          << "\" has mismatched counts/counts_sq sizes.\n";
+                return false;
+            }
+
+            if (tally.rel_error.data.size() != tally.counts.data.size()) {
+                tally.rel_error.resize(tally.counts.dims, 0.0);
+            }
+            if (tally.figure_of_merit.data.size() != tally.counts.data.size()) {
+                tally.figure_of_merit.resize(tally.counts.dims, 0.0);
+            }
+
+            for (size_t i = 0; i < tally.counts.data.size(); ++i) {
+                const double sum    = tally.counts.data[i];
+                const double sum_sq = tally.counts_sq.data[i];
+
+                double R   = 0.0;
+                double fom = 0.0;
+
+                // Relative error based on:
+                // mean = sum / N
+                // sample variance of mean = (sum_sq/N - mean^2)/(N-1)
+                // R = sqrt(var(mean)) / mean
+                //
+                // Equivalent algebraically:
+                // R^2 = (N*sum_sq - sum^2) / ((N-1)*sum^2)
+                if (sum > 0.0) {
+                    double numer = N * sum_sq - sum * sum;
+                    double denom = (N - 1.0) * sum * sum;
+
+                    // Numerical guard
+                    if (numer < 0.0 && std::abs(numer) < 1e-14 * (std::abs(N * sum_sq) + std::abs(sum * sum) + 1.0)) {
+                        numer = 0.0;
+                    }
+
+                    if (numer > 0.0 && denom > 0.0) {
+                        R = std::sqrt(numer / denom);
+                    } else {
+                        R = 0.0;
+                    }
+
+                    if (R > 0.0) {
+                        fom = 1.0 / (R * R * sim_s);
+                    } else {
+                        fom = 0.0;
+                    }
+                } else {
+                    R   = 0.0;
+                    fom = 0.0;
+                }
+
+                tally.rel_error.data[i]       = R;
+                tally.figure_of_merit.data[i] = fom;
+            }
+        }
+
+        return true;
+    };
+
+    if (!process_one_tally_vector(garage.standard_tallies)) return false;
+    if (!process_one_tally_vector(garage.tallies)) return false;
+
     return true;
 }
