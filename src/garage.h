@@ -41,13 +41,22 @@ struct Garage {
     std::vector<double> time_step_bins;
     int lost_particles = 0;
     int     dimensions = 3;
-    double csd_step = 1;
-    std::string csd_model = "spitzer";
-    std::string scattering_model = "csd";
-    int rutherford_order = 1;
-    int rutherford_ions = 1; // Kludge until materials improve
     double electron_density = 1.5055e24;
     std::string angular_scatter = "none";
+
+    // soft scattering settings
+    double csd_step = 1;
+    //std::string csd_model = "spitzer";
+    //std::string scattering_model = "csd";
+    //int rutherford_order = 1;
+    //int rutherford_ions = 1; // Kludge until materials improve
+    std::string electron_soft_scatter_model = "csd_spitzer";
+    int electron_gfp_order = 1;
+    std::string ion_soft_scatter_model = "csd_spitzer";
+    int ion_gfp_order = 1;
+
+
+    
 
     // VR settings
     std::string population_control = "none";

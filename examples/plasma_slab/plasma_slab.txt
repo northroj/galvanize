@@ -2,7 +2,7 @@
 ion_temperature 25
 electron_temperature 25
 particles d
-densities 2.1e-3
+densities 3.72e-5
 mat_id 1
 
 [geometry]
@@ -27,10 +27,13 @@ particles p
 x_bins 0.0 12.0 100 lin
 
 [settings]
-num_particles 10000
-timestep_bins 0.0 1e10 2 lin
+num_particles 1
+timestep_bins 0.0 1e10 0 lin
 dimensions 3
-csd_step 10.0
-scattering_model gfp2_rutherford_plasma
+csd_step 0.01
+electron_soft_scatter_model csd_spitzer
+ion_soft_scatter_model cutoff
+electron_gfp_order 1
+ion_gfp_order 2
 verbosity 1
 

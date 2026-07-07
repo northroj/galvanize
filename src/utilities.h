@@ -340,7 +340,7 @@ inline int bin_index_from_edge(const std::vector<double>& edges, double x) {
 
 double mean_excitation_energy_approximation(int z_target);
 
-double plasma_rutherford_mu_min(double a_ratio);
+double cutoff_fp_mu_min(double a_ratio);
 
 double clamp01(double x);
 

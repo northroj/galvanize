@@ -6,7 +6,7 @@ densities 19.25
 mat_id 1
 
 [geometry]
-x -0.05 5 2 lin
+x -0.05 0.1 2 lin
 y -1e20 1e20
 z -1e20 1e20
 fill 1
@@ -24,15 +24,15 @@ name escape_energy
 category particle_energy
 event vacuum
 particles p
-energy_bins 1620000 1665000 99 lin
+energy_bins 1694000 1700000 99 lin
 
 [settings]
-num_particles 1000
+num_particles 100000
 timestep_bins 0.0 1e10 0 lin
 dimensions 3
-csd_step 10
+csd_step 1
 scattering_model rutherford
-rutherford_order 2
+rutherford_order 0
 rutherford_ions 0
 verbosity 1
 

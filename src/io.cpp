@@ -492,6 +492,15 @@ bool parse_input_file(const std::filesystem::path& path) {
                     garage.dimensions = std::stoi(tok[1]);
                 } else if (tok[0] == "csd_step" && tok.size() == 2) {
                     garage.csd_step = std::stod(tok[1]);
+                } else if (tok[0] == "electron_soft_scatter_model" && tok.size() == 2) {
+                    garage.electron_soft_scatter_model = tok[1];
+                } else if (tok[0] == "ion_soft_scatter_model" && tok.size() == 2) {
+                    garage.ion_soft_scatter_model = tok[1];
+                } else if (tok[0] == "electron_gfp_order") {
+                    garage.electron_gfp_order = std::stoi(tok[1]);
+                } else if (tok[0] == "ion_gfp_order") {
+                    garage.ion_gfp_order = std::stoi(tok[1]);
+                /*
                 } else if (tok[0] == "csd_model" && tok.size() == 2) {
                     garage.csd_model = tok[1];
                 } else if (tok[0] == "scattering_model" && tok.size() == 2) {
@@ -500,6 +509,7 @@ bool parse_input_file(const std::filesystem::path& path) {
                     garage.rutherford_order = std::stoi(tok[1]);
                 } else if (tok[0] == "rutherford_ions") {
                     garage.rutherford_ions = std::stoi(tok[1]);
+                */
                 } else if (tok[0] == "verbosity" && tok.size() == 2) {
                     garage.verbosity = std::stoi(tok[1]);
                 } else if (tok[0] == "angular_scatter") {

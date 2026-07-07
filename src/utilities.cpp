@@ -650,7 +650,7 @@ double mean_excitation_energy_approximation(int z_target){ // keV
 }
 
 
-double plasma_rutherford_mu_min(double a_ratio){
+double cutoff_fp_mu_min(double a_ratio){
     double mu_min = 0.0;
     double eps = 1e-10;
     if (a_ratio > 1.0 + eps) { // if A > 1

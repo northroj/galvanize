@@ -26,14 +26,16 @@ void nudge_into_cell(double &coord, double lo, double hi, double raw_eps);
 
 void spitzer_csd(class Particle& p, double& dedt_electron, double& dedx_electron, double& dedt_ion, double& dedx_ion);
 
-void select_scattering(Particle& p, Material local_material, double& dist_scatter, int& scatter_index, std::vector<double>& gfp_coefficients);
+void select_scattering(Particle& p, Material local_material, double& dist_scatter, int& scatter_index, std::vector<double>& gfp_coefficients, int& collision_index);
+double dist_gfp_scatter(Particle& p, Material local_material, std::vector<double>& gfp_coefficients, int target_index, std::string xs_type, int& gfp_order);
+void scattering_collision_analytic(Particle& p, Material local_material, int target_index, double& scattering_energy_loss, std::vector<double> gfp_coefficients, int collision_index);
 
-void scattering_collision_analytic(Particle& p, Material local_material, int species_it, double& scattering_energy_loss, std::vector<double> gfp_coefficients);
+double rutherford_ion_electron_constant(Particle& p, std::string species_target, double rho_target);
+double cutoff_fokker_planck_constant(Particle& p, std::string species_target, double rho_target);
+double fokker_planck_moment(Particle& p, std::string species_target, double rho_target, int order, std::string xs_type);
 
-double rutherford_ion_electron_constant(Particle& p, int z_target, double a_target, double rho_target);
-double rutherford_ion_ion_constant(Particle& p, int z_target, double a_target, double rho_target);
-
-double rutherford_dcs_moment(Particle& p, int z_target, double a_target, double rho_target, int order);
+double beling_fq(double Q, double q_max, double q_min, double beta_sq, double r);
+double beling_dfdq(double Q, double q_max, double q_min, double beta_sq);
 
 double scattering_xs_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
 double stopping_analytic_rutherford(Particle& p, int z_target, double a_target, double rho_target);
